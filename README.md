@@ -82,6 +82,7 @@ The private storage bucket `cvs` is created for you on first start.
 | `SUPABASE_URL`, `SUPABASE_KEY` | From step 2 |
 | `DEEPSEEK_API_KEY` | From your DeepSeek account |
 | `FIRECRAWL_API_KEY` | From your Firecrawl account |
+| `FIRECRAWL_MIN_INTERVAL`, `FIRECRAWL_CONCURRENCY`, `FIRECRAWL_MAX_RETRIES` | Wait time between Firecrawl requests (default 2 seconds), requests at once (2), and retries after a 429 "too many requests" (6, with growing waits). Free plans are strict: use `6` and `1`. Paid plans can use `0.5` and `5` |
 | `APP_SECRET_KEY` | A key that encrypts your Gmail login. Make one: `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | From step 4 (can wait until you want to send) |
 | `DRY_RUN` | Keep `true` until you finish the test send |

@@ -42,6 +42,8 @@ async def audit_company(company: dict, run_id: str) -> bool:
     home_url = f"https://{domain}"
     try:
         home = await firecrawl.scrape(home_url, ["markdown", "links", "rawHtml"], False, cid, "home", run_id)
+    except firecrawl.RateLimited:
+        raise
     except firecrawl.ScrapeError as e:
         db.table("companies").update({"status": "failed", "fail_reason": f"homepage: {e}"[:200]}).eq("id", cid).execute()
         log_event(run_id, "warn", "audit", f"{domain}: homepage failed: {e}")
@@ -57,6 +59,8 @@ async def audit_company(company: dict, run_id: str) -> bool:
     for kind, url in picked:
         try:
             await firecrawl.scrape(url, ["markdown"], kind != "contact", cid, kind, run_id)
+        except firecrawl.RateLimited:
+            raise  # do not mark the company audited with pages missing. Saved pages are reused next time
         except firecrawl.ScrapeError as e:  # a missing sub page is fine, keep going
             log_event(run_id, "warn", "audit", f"{domain}: {kind} page failed: {e}")
     db.table("companies").update({"status": "audited", "last_audited_at": datetime.now(timezone.utc).isoformat()}).eq("id", cid).execute()
@@ -80,6 +84,9 @@ async def run(run_id: str, should_stop, ids: list[str] | None = None):
                 stopped = True
                 db.table("companies").update({"status": "new"}).eq("id", c["id"]).execute()  # not audited yet: pick it up next time
                 raise
+            except firecrawl.RateLimited as e:
+                db.table("companies").update({"status": "new"}).eq("id", c["id"]).execute()  # try again later (Continue / Qualify)
+                log_event(run_id, "warn", "audit", f"{c['domain']}: Firecrawl rate limit, will try again later. {e}")
             except Exception as e:
                 db.table("companies").update({"status": "failed", "fail_reason": f"audit error: {type(e).__name__}"}).eq("id", c["id"]).execute()
                 log_event(run_id, "error", "audit", f"{c['domain']}: {e}")

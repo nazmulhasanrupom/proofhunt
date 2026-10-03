@@ -135,3 +135,27 @@ def test_rewrite_keeps_optout_and_signature():
     assert rewrite.warnings_for(0, "city pages", new, "Acme", []) == []
     assert any("company name" in w for w in rewrite.warnings_for(0, "city pages", new.replace("Acme", "they"), "Acme", []))
     assert rewrite.join_body("x", "").endswith(OPTOUT)       # opt-out line was removed by hand: it comes back
+
+
+def test_firecrawl_backoff_and_pacing(monkeypatch):
+    import asyncio, time
+    from app.services import firecrawl as fc
+    assert fc.backoff_seconds(0, None) == 5 and fc.backoff_seconds(1, None) == 10 and fc.backoff_seconds(2, None) == 20
+    assert fc.backoff_seconds(0, 30) == 30                  # Firecrawl's own hint wins when longer
+    assert fc.backoff_seconds(9, None) == 90                # never more than 90 s
+
+    monkeypatch.setattr(fc.settings, "firecrawl_min_interval", 0.1)
+    monkeypatch.setattr(fc, "_interval", 0.0)
+    monkeypatch.setattr(fc, "_next_at", 0.0)
+
+    async def three():
+        t = time.monotonic()
+        await asyncio.gather(fc._pace(), fc._pace(), fc._pace())
+        return time.monotonic() - t
+    assert asyncio.run(three()) >= 0.19                     # three callers leave 0.1 s apart, not at once
+
+    fc._slow_down(0)                                        # a 429: the gap grows
+    assert fc._interval > 0.1
+    before = fc._interval
+    fc._speed_up()
+    assert 0.1 <= fc._interval < before                     # and shrinks again after a success

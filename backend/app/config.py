@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     supabase_key: str = ""
 
     firecrawl_api_key: str = ""
+    # Be gentle with Firecrawl. Free plans allow few requests per minute and few at once.
+    firecrawl_min_interval: float = 2.0   # seconds to wait between two requests (any task)
+    firecrawl_concurrency: int = 2        # requests in flight at the same time
+    firecrawl_max_retries: int = 6        # after a 429 "too many requests": wait, then try again this many times
 
     app_secret_key: str = ""
     redis_url: str = "redis://redis:6379/0"
