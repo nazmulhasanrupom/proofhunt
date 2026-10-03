@@ -17,12 +17,15 @@ def sending_status():
 @router.get("/outbox")
 def outbox(status: str | None = None, page: int = 0):
     q = get_db().table("messages").select(
-        "id,lead_id,step,subject,status,scheduled_at,sent_at,error,gmail_message_id, "
+        "id,lead_id,step,subject,body,status,scheduled_at,sent_at,error,gmail_message_id,evidence_ids, "
         "leads(timezone, companies(domain,name), people(name,email))"
-    ).neq("status", "draft")
+    )
     if status:
         q = q.eq("status", status)
-    return q.order("sent_at", desc=True, nullsfirst=True).range(page * 100, page * 100 + 99).execute().data
+    rows = q.order("sent_at", desc=True, nullsfirst=True).range(page * 100, page * 100 + 99).execute().data
+    # a draft shows here only when its lead already started (for example after Unapprove). Other drafts live in the Review queue.
+    live = {l["id"] for l in get_db().table("leads").select("id").eq("stage", "in_sequence").execute().data}
+    return [r for r in rows if r["status"] != "draft" or r["lead_id"] in live]
 
 
 @router.get("/replies")

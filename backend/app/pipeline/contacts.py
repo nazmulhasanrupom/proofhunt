@@ -92,12 +92,13 @@ async def mx_ok(domain: str) -> bool:
 # ---------- stage runner (touches the database) ----------
 from ..db import get_db  # noqa: E402
 from ..services.usage import log_event  # noqa: E402
+from .scope import todo as scope_todo  # noqa: E402
 
 
-async def run(run_id: str, campaign: dict, should_stop):
+async def run(run_id: str, campaign: dict, should_stop, ids: list[str] | None = None):
     db = get_db()
     f = campaign["filters"]
-    todo = db.table("companies").select("*").eq("run_id", run_id).eq("status", "extracted").execute().data
+    todo = scope_todo(run_id, ["extracted"], ids)
     for c in todo:
         if should_stop():
             return

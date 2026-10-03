@@ -4,7 +4,8 @@ from pydantic import BaseModel
 
 from ..db import get_db
 from ..services import llm
-from ..services.usage import log_event
+from ..services.usage import BudgetExceeded, log_event
+from .scope import todo as scope_todo
 from .offer_map import load_map
 
 TZ = {"United States": "America/New_York", "Canada": "America/Toronto",
@@ -84,9 +85,9 @@ async def judge_company(c: dict, campaign: dict, run_id: str | None) -> str:
     return status
 
 
-async def run(run_id: str, campaign: dict, should_stop):
+async def run(run_id: str, campaign: dict, should_stop, ids: list[str] | None = None):
     db = get_db()
-    todo = db.table("companies").select("*").eq("run_id", run_id).eq("status", "contacted").execute().data
+    todo = scope_todo(run_id, ["contacted"], ids)
     for c in todo:
         if should_stop():
             return
@@ -94,6 +95,6 @@ async def run(run_id: str, campaign: dict, should_stop):
             status = await judge_company(c, campaign, run_id)
             log_event(run_id, "info", "judge", f"{c['domain']}: {status}")
         except Exception as e:
-            if type(e).__name__ == "BudgetExceeded":
+            if isinstance(e, BudgetExceeded):
                 raise
             log_event(run_id, "error", "judge", f"{c['domain']}: {e}")

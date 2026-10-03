@@ -6,6 +6,7 @@ from urllib.parse import urljoin, urlparse
 from ..db import get_db
 from ..services import firecrawl
 from ..services.usage import BudgetExceeded, log_event
+from .scope import todo as scope_todo
 
 PRIORITY = [
     ("about", r"about|team|who-we-are|people"),
@@ -62,9 +63,9 @@ async def audit_company(company: dict, run_id: str) -> bool:
     return True
 
 
-async def run(run_id: str, should_stop):
+async def run(run_id: str, should_stop, ids: list[str] | None = None):
     db = get_db()
-    todo = db.table("companies").select("*").eq("run_id", run_id).in_("status", ["new", "auditing"]).execute().data
+    todo = scope_todo(run_id, ["new", "auditing"], ids)
     sem = asyncio.Semaphore(3)
     stopped = False
 
@@ -77,6 +78,7 @@ async def run(run_id: str, should_stop):
                 await audit_company(c, run_id)
             except BudgetExceeded:
                 stopped = True
+                db.table("companies").update({"status": "new"}).eq("id", c["id"]).execute()  # not audited yet: pick it up next time
                 raise
             except Exception as e:
                 db.table("companies").update({"status": "failed", "fail_reason": f"audit error: {type(e).__name__}"}).eq("id", c["id"]).execute()

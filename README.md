@@ -168,20 +168,32 @@ The same thing works on any host:
 | Page | What it does |
 |---|---|
 | Dashboard | Qualified leads, sent this week, reply rate, credits left, funnel, top signals, hot replies |
-| Activity / Runs | Live log of a run. Pause, resume, cancel |
+| Activity / Runs | Pick any run. See its companies, per-stage usage and live log. Pause, resume, cancel. **Continue** picks up companies a stage limit left behind. **Qualify the N found** stops searching and qualifies what a paused run already found |
 | Profile & CV / Offer map | Upload a CV. Edit services, problems, proof and signals |
 | Campaigns | Filters and the credit estimate |
-| Companies | Every company with facts, quotes, people and the judgment |
+| Companies | Every company with facts, quotes, people and the judgment. **Qualify** one company, or tick several (or select all) and press **Qualify selected**. It starts a manual run you can watch in Activity |
 | Leads | Board (drag to change stage) or table. Emails, report, demo, notes |
 | Review queue | Approve, edit, regenerate or skip drafts |
-| Outbox / Replies | What is scheduled and sent. Replies with a label (interested, not now, …) |
+| Outbox / Replies | Scheduled and sent emails. **Edit**, **Unapprove** (back to draft, or back to the Review queue if nothing was sent) or **Delete** any email that is not sent yet. Replies with a label (interested, not now, …) |
 | Usage & credits | Credits, tokens and emails per day. Cost per qualified lead |
 | Do not contact | Block an email or a whole domain |
 | Settings | Gmail, sender info, limits, send window, follow-up days |
 
-`Ctrl+K` jumps to any page, company or lead.
+`Ctrl+K` jumps to any page, company or lead. The **Log** bar at the bottom of every page shows what the backend is doing right now (runs, sending, replies, email edits).
+
+**Rewrite with AI:** in the Review queue and the Outbox, every email has a *Rewrite with AI* button. Type what to change (optional), read the new version, then save or discard it. The opt-out line and your signature are never touched by the AI.
 
 ---
+
+## Limits: every stage has its own
+
+A run goes through stages: discovery → audit → extract → contacts → judge → reports → emails. In the campaign form you set:
+
+- **Firecrawl credits per stage** and **AI calls per stage** (defaults 500 and 300). **Every stage gets its own fresh limit.**
+- When a stage reaches its limit, the run does **not** stop. It moves on to the next stage with the companies it already has. Discovery hitting its limit means: stop searching, start qualifying what was found.
+- **Credit cap for the whole run** is the hard stop. The run pauses.
+- Companies a limit left behind stay in their status. Press **Continue** on the run, or use **Qualify** on the Companies page. Saved pages are reused, so only never-read companies cost Firecrawl credits.
+- `DEV_FIRECRAWL_CREDIT_LIMIT` and `DEV_LLM_CALL_LIMIT` in `.env` are a separate, all-time safety stop for testing. Reaching them pauses everything. Clear them (empty value) for real use.
 
 ## Settings that matter
 
@@ -199,7 +211,7 @@ The same thing works on any host:
 docker compose exec api sh -c "pip install -q pytest && python -m pytest -q tests"
 ```
 
-20 tests. They never call a live service.
+24 tests. They never call a live service.
 
 ## If something goes wrong
 

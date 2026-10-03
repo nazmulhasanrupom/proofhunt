@@ -20,6 +20,7 @@ import LeadsPage from "./pages/LeadsPage";
 import UsagePage from "./pages/UsagePage";
 import DncPage from "./pages/DncPage";
 import CommandPalette from "./components/CommandPalette";
+import LogDock from "./components/LogDock";
 import { ToastProvider } from "./components/Toast";
 
 const real: Record<string, JSX.Element> = {
@@ -45,7 +46,8 @@ export default function App() {
     <div className="flex h-full">
       <Sidebar />
       <CommandPalette />
-      <main className="min-w-0 flex-1">
+      <div className="flex min-w-0 flex-1 flex-col">
+      <main className="min-h-0 flex-1">
         <ErrorBoundary resetKey={pathname}>
         <Routes>
           {nav.flatMap((g) => g.items).map((i) => (
@@ -55,6 +57,8 @@ export default function App() {
         </Routes>
         </ErrorBoundary>
       </main>
+      <LogDock />
+      </div>
     </div>
     </ToastProvider>
   );

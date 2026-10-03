@@ -88,3 +88,50 @@ def test_secret_key_errors(monkeypatch):
     monkeypatch.setattr(gmail.settings, "app_secret_key", other)   # key changed
     with pytest.raises(gmail.GmailAuthError):
         gmail.decrypt(saved)
+
+
+def _stage_db(used: dict, filters: dict):
+    return FakeDb({"runs": {"stage": "audit", "campaign_id": "c", "counters": {"stage_usage": {"audit": used}}},
+                   "campaigns": {"filters": filters}})
+
+
+def test_stage_limit_moves_on_not_pauses(monkeypatch):
+    monkeypatch.setattr(usage.settings, "dev_firecrawl_credit_limit", None)
+    monkeypatch.setattr(usage, "get_db", lambda: _stage_db({"credits": 98}, {"maxCreditsPerStage": 100}))
+    usage.check_credit_budget(2, "r")                       # exactly at the stage limit: allowed
+    with pytest.raises(usage.StageLimitReached) as e:
+        usage.check_credit_budget(3, "r")
+    assert isinstance(e.value, usage.BudgetExceeded)          # old code that re-raises BudgetExceeded still works
+    assert e.value.stage == "audit" and e.value.limit == 100
+
+
+def test_stage_llm_limit_and_fresh_stage(monkeypatch):
+    monkeypatch.setattr(usage.settings, "dev_llm_call_limit", None)
+    monkeypatch.setattr(usage, "get_db", lambda: _stage_db({"llm_calls": 5}, {"maxLlmCallsPerStage": 5}))
+    with pytest.raises(usage.StageLimitReached):
+        usage.check_llm_budget("r")
+    # another stage has used nothing, so it has its own full limit
+    db = FakeDb({"runs": {"stage": "judge", "campaign_id": "c", "counters": {"stage_usage": {"audit": {"llm_calls": 5}}}},
+                 "campaigns": {"filters": {"maxLlmCallsPerStage": 5}}})
+    monkeypatch.setattr(usage, "get_db", lambda: db)
+    usage.check_llm_budget("r")
+
+
+def test_old_campaign_gets_default_stage_limits():
+    from app.schemas import CampaignFilters
+    old = {"leadsWanted": 10, "maxCompaniesToScan": 3, "maxCreditsPerRun": 40}   # saved before the new fields existed
+    f = CampaignFilters.model_validate(old)
+    assert f.maxCreditsPerStage == 500 and f.maxLlmCallsPerStage == 300
+
+
+def test_rewrite_keeps_optout_and_signature():
+    from app.pipeline import rewrite
+    from app.pipeline.sequences import OPTOUT
+    body = f"Hi Sam, Acme writes city pages by hand.\n\nWant the report?\n\n{OPTOUT}\n\nJane Doe\n1 Main St"
+    core, tail = rewrite.split_body(body)
+    assert core.endswith("Want the report?") and tail.startswith(OPTOUT) and tail.endswith("1 Main St")
+    new = rewrite.join_body("New text about Acme.", tail)
+    assert new.endswith(tail) and "New text about Acme." in new
+    assert rewrite.warnings_for(0, "city pages", new, "Acme", []) == []
+    assert any("company name" in w for w in rewrite.warnings_for(0, "city pages", new.replace("Acme", "they"), "Acme", []))
+    assert rewrite.join_body("x", "").endswith(OPTOUT)       # opt-out line was removed by hand: it comes back

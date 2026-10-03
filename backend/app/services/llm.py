@@ -50,7 +50,7 @@ async def complete_json(task: str, model: str, system: str, user: str,
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     last_err = None
     for attempt in range(2):
-        usage.check_llm_budget()
+        usage.check_llm_budget(run_id)
         kwargs = {"model": model_name, "messages": messages}
         kwargs["temperature"] = temperature
         if use_json_mode:

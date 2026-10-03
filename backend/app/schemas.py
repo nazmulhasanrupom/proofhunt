@@ -33,7 +33,9 @@ class EmailFilters(BaseModel):
 class CampaignFilters(BaseModel):
     leadsWanted: int = Field(100, ge=1)
     maxCompaniesToScan: int = Field(500, ge=1)
-    maxCreditsPerRun: int = Field(2500, ge=1)
+    maxCreditsPerRun: int = Field(2500, ge=1)       # hard cap for the whole run: the run pauses
+    maxCreditsPerStage: int = Field(500, ge=1)      # each stage gets its own fresh limit. At the limit the run moves on
+    maxLlmCallsPerStage: int = Field(300, ge=1)
     maxPerCompany: int = 1
     company: CompanyFilters = CompanyFilters()
     person: PersonFilters = PersonFilters()

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useToast } from "../components/Toast";
 import Empty from "../components/Empty";
@@ -28,6 +28,33 @@ export default function CompaniesPage() {
   const [q, setQ] = useState("");
   const [page, setPage] = useState(0);
   const open = params.get("id");
+  const toast = useToast();
+  const qc = useQueryClient();
+  const nav = useNavigate();
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const qualify = useMutation({
+    mutationFn: (ids: string[]) => api<{ runs: { run_id: string; count: number }[]; companies: number; estimated_credits: number }>("/companies/qualify", { body: { ids } }),
+    onSuccess: (r) => {
+      toast(`Qualifying ${r.companies} compan${r.companies === 1 ? "y" : "ies"}. Watch it in Activity`);
+      setPicked(new Set());
+      qc.invalidateQueries({ queryKey: ["companies"] }); qc.invalidateQueries({ queryKey: ["runs"] });
+      nav(`/activity?run=${r.runs[0].run_id}`);
+    },
+    onError: (e: Error) => toast(e.message, true),
+  });
+  const pickAll = useMutation({
+    mutationFn: () => api<string[]>(`/companies/ids?status=${encodeURIComponent(status)}&q=${encodeURIComponent(q)}`),
+    onSuccess: (ids) => { setPicked(new Set(ids)); toast(`${ids.length} selected`); },
+    onError: (e: Error) => toast(e.message, true),
+  });
+  const ask = (ids: string[], rows: Row[]) => {
+    const fresh = rows.filter((r) => ids.includes(r.id) && ["new", "failed", "auditing"].includes(r.status)).length;
+    const msg = `Qualify ${ids.length} compan${ids.length === 1 ? "y" : "ies"} now?\n\n` +
+      "It reads their site (only if not read before), finds the contact, scores the fit, and writes the emails. " +
+      (fresh ? `About ${fresh} of them may be new to Firecrawl: up to ${fresh * 4} credits. ` : "Saved pages are reused, so this should cost no Firecrawl credits. ") +
+      "It also uses AI calls.";
+    if (confirm(msg)) qualify.mutate(ids);
+  };
   const { data, isLoading } = useQuery({
     queryKey: ["companies", status, q, page],
     queryFn: () => api<Row[]>(`/companies?page=${page}&status=${encodeURIComponent(status)}&q=${encodeURIComponent(q)}`),
@@ -45,18 +72,32 @@ export default function CompaniesPage() {
         </span>
       </div>
       <div className="page-body">
+        {picked.size > 0 && (
+          <div className="mb-3 flex items-center gap-2 rounded-lg px-3 py-2" style={{ background: "var(--bg-3)" }}>
+            <span>{picked.size} selected</span>
+            <button className="btn-primary" disabled={qualify.isPending} onClick={() => ask([...picked], data ?? [])}>{qualify.isPending ? "Starting…" : "Qualify selected"}</button>
+            <button className="btn" onClick={() => setPicked(new Set())}>Clear</button>
+          </div>
+        )}
         {isLoading && <Skeleton />}
         {data?.length === 0 && <Empty text={q || status ? "No company matches." : "No companies yet. Start a run from Campaigns."} />}
         {!!data?.length && (
           <>
             <table className="table">
-              <thead><tr><th>Domain</th><th>Name</th><th>Country</th><th>Size</th><th>Keyword hits</th><th>Score</th><th>Status</th></tr></thead>
+              <thead><tr><th style={{ width: 32 }}><input type="checkbox" title="Select this page" aria-label="Select all on this page"
+                checked={data.every((c) => picked.has(c.id))}
+                onChange={(e) => setPicked((p) => { const n = new Set(p); data.forEach((c) => (e.target.checked ? n.add(c.id) : n.delete(c.id))); return n; })} /></th><th>Domain</th><th>Name</th><th>Country</th><th>Size</th><th>Keyword hits</th><th>Score</th><th>Status</th><th /></tr></thead>
               <tbody>
                 {data.map((c) => (
                   <tr key={c.id} style={{ cursor: "pointer" }} onClick={() => setParams({ id: c.id })}>
+                    <td onClick={(e) => e.stopPropagation()}><input type="checkbox" aria-label={`Select ${c.domain}`} checked={picked.has(c.id)}
+                      onChange={(e) => setPicked((p) => { const n = new Set(p); e.target.checked ? n.add(c.id) : n.delete(c.id); return n; })} /></td>
                     <td>{c.domain}</td><td>{c.name ?? "—"}</td><td>{c.country ?? "—"}</td>
                     <td>{c.size_estimate ?? c.size_bucket ?? "—"}</td><td>{c.keyword_hits?.length ?? 0}</td><td>{c.score ?? "—"}</td>
-                    <td><span className="dot" style={{ background: companyColor(c.status) }} />{c.status}</td>
+                    <td><span className="dot" style={{ background: companyColor(c.status) }} />{c.status}{c.fail_reason ? <span style={{ color: "var(--text-faint)" }}> · {c.fail_reason}</span> : null}</td>
+                    <td className="text-right" onClick={(e) => e.stopPropagation()}>
+                      <button className="btn" disabled={qualify.isPending} onClick={() => ask([c.id], data)}>Qualify</button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -65,6 +106,8 @@ export default function CompaniesPage() {
               <button className="btn" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</button>
               <button className="btn" disabled={data.length < 50} onClick={() => setPage(page + 1)}>Next</button>
               <span style={{ color: "var(--text-faint)", fontSize: 12 }}>Page {page + 1}</span>
+              <span className="flex-1" />
+              <button className="btn" disabled={pickAll.isPending} onClick={() => pickAll.mutate()}>Select all {q || status ? "matching" : ""} (every page)</button>
             </div>
           </>
         )}
@@ -79,6 +122,12 @@ export function CompanyDrawer({ id, onClose }: { id: string; onClose: () => void
   const qc = useQueryClient();
   const [tab, setTab] = useState("Facts");
   const { data: c, isLoading } = useQuery({ queryKey: ["company", id], queryFn: () => api<Detail>(`/companies/${id}`) });
+  const nav = useNavigate();
+  const qualify = useMutation({
+    mutationFn: () => api<{ runs: { run_id: string }[] }>("/companies/qualify", { body: { ids: [id] } }),
+    onSuccess: (r) => { toast("Qualifying. Watch it in Activity"); qc.invalidateQueries({ queryKey: ["runs"] }); nav(`/activity?run=${r.runs[0].run_id}`); },
+    onError: (e: Error) => toast(e.message, true),
+  });
   const rejudge = useMutation({
     mutationFn: () => api<{ status: string }>(`/companies/${id}/rejudge`, { method: "POST" }),
     onSuccess: (r) => { toast(`Judged again: ${r.status}`); qc.invalidateQueries({ queryKey: ["company", id] }); qc.invalidateQueries({ queryKey: ["companies"] }); },
@@ -91,6 +140,7 @@ export function CompanyDrawer({ id, onClose }: { id: string; onClose: () => void
         {isLoading && <Skeleton rows={5} />}
         {c && tab === "Facts" && (
           <>
+            <button className="btn-primary mb-3" disabled={qualify.isPending} onClick={() => { if (confirm(`Qualify ${c.domain} now?`)) qualify.mutate(); }}>{qualify.isPending ? "Starting…" : "Qualify this company"}</button>
             <KV k="Status" v={<><span className="dot" style={{ background: companyColor(c.status) }} />{c.status}{c.fail_reason ? ` — ${c.fail_reason}` : ""}</>} />
             <KV k="Country" v={c.country} /><KV k="Size" v={c.size_estimate ?? c.size_bucket} />
             <KV k="Last audit" v={dayTime(c.last_audited_at)} />

@@ -5,6 +5,7 @@ import { useToast } from "../components/Toast";
 import Empty from "../components/Empty";
 import Skeleton from "../components/Skeleton";
 import SendBanner from "../components/SendBanner";
+import MessageEditor from "../components/MessageEditor";
 
 type Msg = { id: string; step: number; subject: string; body: string; error: string | null; evidence_ids: string[] };
 type Lead = {
@@ -28,11 +29,6 @@ export default function ReviewPage() {
     onSuccess: (_d, v) => { toast(v.what === "approve" ? "Approved" : v.what === "skip" ? "Skipped" : "New drafts created"); done(); },
     onError: (e: Error) => toast(e.message, true),
   });
-  const save = async (m: Msg, patch: Partial<Msg>) => {
-    try { await api(`/messages/${m.id}`, { method: "PATCH", body: patch }); toast("Saved"); done(); }
-    catch (e) { toast((e as Error).message, true); }
-  };
-
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
@@ -86,12 +82,7 @@ export default function ReviewPage() {
               <div className="grid gap-4" style={{ gridTemplateColumns: "1fr 280px" }}>
                 <div className="flex flex-col gap-3">
                   {lead.messages.map((m) => (
-                    <div key={m.id} className="card flex flex-col gap-2">
-                      <span className="label">{m.step === 0 ? "Main email" : `Follow-up ${m.step}`}</span>
-                      {m.error && <div style={{ color: "var(--warn)", fontSize: 12 }}>{m.error}</div>}
-                      <input className="input" key={m.id + m.subject} defaultValue={m.subject} onBlur={(e) => e.target.value !== m.subject && save(m, { subject: e.target.value })} />
-                      <textarea className="textarea" style={{ minHeight: 160 }} key={m.id + m.body} defaultValue={m.body} onBlur={(e) => e.target.value !== m.body && save(m, { body: e.target.value })} />
-                    </div>
+                    <div key={m.id} className="card"><MessageEditor m={m} onSaved={done} /></div>
                   ))}
                 </div>
                 <div className="flex flex-col gap-3">

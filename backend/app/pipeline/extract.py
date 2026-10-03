@@ -198,19 +198,20 @@ def verify_items(items: list[dict], pages: list[dict]) -> tuple[list[dict], list
 
 # ---------- stage runner (touches the database) ----------
 from ..db import get_db  # noqa: E402
-from ..services.usage import log_event  # noqa: E402
+from ..services.usage import BudgetExceeded, log_event  # noqa: E402
+from .scope import todo as scope_todo  # noqa: E402
 from .filters import apply_filters, size_bucket  # noqa: E402
 from .offer_map import load_map  # noqa: E402
 
 
-async def run(run_id: str, campaign: dict, should_stop):
+async def run(run_id: str, campaign: dict, should_stop, ids: list[str] | None = None):
     db = get_db()
     f = campaign["filters"]
     rows = [r for r in load_map(campaign["profile_id"]) if r["active"]]
     signals = [{**s, "offer_row_id": r["id"]} for r in rows for s in r["signals"] if s["active"]]
     code_signals = [s for s in signals if s["detector_type"] != "llm"]
     llm_signals = [s for s in signals if s["detector_type"] == "llm"]
-    todo = db.table("companies").select("*").eq("run_id", run_id).eq("status", "audited").execute().data
+    todo = scope_todo(run_id, ["audited"], ids)
     for c in todo:
         if should_stop():
             return
@@ -218,6 +219,8 @@ async def run(run_id: str, campaign: dict, should_stop):
         try:
             a = code_checks(c["domain"], pages, code_signals, f["company"]["webKeywords"])
             ex = await llm_extract(pages, llm_signals, run_id)
+        except BudgetExceeded:
+            raise  # a limit is not the company's fault: it stays 'audited' and is picked up next time
         except Exception as e:
             db.table("companies").update({"status": "failed", "fail_reason": f"extract error: {str(e)[:200]}"}).eq("id", c["id"]).execute()
             log_event(run_id, "error", "extract", f"{c['domain']}: {e}")

@@ -8,7 +8,7 @@ import Empty from "../components/Empty";
 import Skeleton from "../components/Skeleton";
 
 type Filters = {
-  leadsWanted: number; maxCompaniesToScan: number; maxCreditsPerRun: number; maxPerCompany: number;
+  leadsWanted: number; maxCompaniesToScan: number; maxCreditsPerRun: number; maxCreditsPerStage: number; maxLlmCallsPerStage: number; maxPerCompany: number;
   company: { countries: string[]; employeeRanges: number[][]; allowUnknownSize: boolean; webKeywords: string[]; minKeywordHits: number; excludeDomains: string[]; cooldownDays: number };
   person: { titlePriority: string[]; excludeTitle: string[]; seniority: string[]; excludeSeniority: string[]; matchMode: string };
   qualify: { minFitScore: number; maybeFrom: number; demoFrom: number };
@@ -17,7 +17,7 @@ type Filters = {
 type Campaign = { id: string; name: string; status: string; filters: Filters; created_at: string };
 
 const DEFAULTS: Filters = {
-  leadsWanted: 100, maxCompaniesToScan: 500, maxCreditsPerRun: 2500, maxPerCompany: 1,
+  leadsWanted: 100, maxCompaniesToScan: 500, maxCreditsPerRun: 2500, maxCreditsPerStage: 500, maxLlmCallsPerStage: 300, maxPerCompany: 1,
   company: { countries: ["United States", "United Kingdom", "Canada", "Australia"], employeeRanges: [[1, 10], [11, 50]], allowUnknownSize: true,
     webKeywords: ["seo agency", "content marketing", "link building", "digital marketing agency", "white label seo"], minKeywordHits: 1, excludeDomains: [], cooldownDays: 180 },
   person: { titlePriority: ["founder", "co-founder", "ceo", "coo", "head of operations"], excludeTitle: ["intern", "assistant", "junior", "coordinator"],
@@ -70,8 +70,16 @@ export default function CampaignsPage() {
             <div className="grid grid-cols-4 gap-3">
               <Num label="Leads wanted" value={f.leadsWanted} onChange={(n) => set("leadsWanted", n)} />
               <Num label="Max companies to scan" value={f.maxCompaniesToScan} onChange={(n) => set("maxCompaniesToScan", n)} />
-              <Num label="Max credits per run" value={f.maxCreditsPerRun} onChange={(n) => set("maxCreditsPerRun", n)} />
               <Num label="Cooldown days" value={f.company.cooldownDays} onChange={(n) => set("company", { ...f.company, cooldownDays: n })} />
+              <Num label="Credit cap for the whole run" value={f.maxCreditsPerRun} onChange={(n) => set("maxCreditsPerRun", n)} />
+            </div>
+            <div className="grid grid-cols-4 gap-3">
+              <Num label="Firecrawl credits per stage" value={f.maxCreditsPerStage} onChange={(n) => set("maxCreditsPerStage", n)} />
+              <Num label="AI calls per stage" value={f.maxLlmCallsPerStage} onChange={(n) => set("maxLlmCallsPerStage", n)} />
+              <div className="col-span-2 self-end pb-2" style={{ color: "var(--text-faint)", fontSize: 12 }}>
+                Every stage (discovery, audit, extract, contacts, judge, reports, emails) gets its own fresh limit.
+                When a stage reaches its limit, the run moves on to the next stage with the companies it already has. It does not stop.
+              </div>
             </div>
             <div><span className="label">Countries</span><ChipInput value={f.company.countries} onChange={(v) => set("company", { ...f.company, countries: v })} /></div>
             <div><span className="label">Web keywords</span><ChipInput value={f.company.webKeywords} onChange={(v) => set("company", { ...f.company, webKeywords: v })} /></div>

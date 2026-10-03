@@ -9,7 +9,41 @@ _bump_lock = threading.Lock()
 
 
 class BudgetExceeded(Exception):
-    pass
+    """A hard stop. The run pauses."""
+
+
+class StageLimitReached(BudgetExceeded):
+    """One stage used up its own limit. The run does NOT pause: it moves on to the next stage."""
+
+    def __init__(self, stage: str, what: str, used: int, limit: int):
+        self.stage, self.what, self.used, self.limit = stage, what, used, limit
+        super().__init__(f"{stage}: {what} limit reached ({used} of {limit})")
+
+
+STAGE_DEFAULTS = {"credits": 500, "llm_calls": 300}
+
+
+def _stage_state(run_id: str) -> tuple[str | None, dict, dict]:
+    """(stage, usage of that stage so far, campaign filters)"""
+    run = get_db().table("runs").select("stage,counters,campaign_id").eq("id", run_id).single().execute().data
+    camp = get_db().table("campaigns").select("filters").eq("id", run["campaign_id"]).single().execute().data
+    stage = run.get("stage")
+    used = ((run.get("counters") or {}).get("stage_usage") or {}).get(stage) or {}
+    return stage, used, camp["filters"] or {}
+
+
+def check_stage_limit(run_id: str | None, what: str, cost: int):
+    """what: 'credits' or 'llm_calls'. Raises StageLimitReached when this stage would pass its own limit."""
+    if not run_id:
+        return
+    stage, used, f = _stage_state(run_id)
+    if not stage:
+        return
+    key = "maxCreditsPerStage" if what == "credits" else "maxLlmCallsPerStage"
+    limit = f.get(key) or STAGE_DEFAULTS[what]
+    now = used.get(what, 0)
+    if now + cost > limit:
+        raise StageLimitReached(stage, "Firecrawl credit" if what == "credits" else "AI call", now, limit)
 
 
 def add_usage(credits=0, calls=0, in_tokens=0, out_tokens=0, emails=0):
@@ -33,6 +67,7 @@ def check_credit_budget(cost: int, run_id: str | None = None):
     if limit and total_usage()["credits"] + cost > limit:
         raise BudgetExceeded(f"DEV_FIRECRAWL_CREDIT_LIMIT ({limit}) would be exceeded")
     if run_id:
+        check_stage_limit(run_id, "credits", cost)
         run = get_db().table("runs").select("credits_used,campaign_id").eq("id", run_id).single().execute().data
         camp = get_db().table("campaigns").select("filters").eq("id", run["campaign_id"]).single().execute().data
         max_run = camp["filters"].get("maxCreditsPerRun")
@@ -40,10 +75,11 @@ def check_credit_budget(cost: int, run_id: str | None = None):
             raise BudgetExceeded(f"maxCreditsPerRun ({max_run}) reached")
 
 
-def check_llm_budget():
+def check_llm_budget(run_id: str | None = None):
     limit = settings.dev_llm_call_limit
     if limit and total_usage()["calls"] >= limit:
         raise BudgetExceeded(f"DEV_LLM_CALL_LIMIT ({limit}) reached")
+    check_stage_limit(run_id, "llm_calls", 1)
 
 
 def bump_run(run_id: str | None, credits=0, calls=0, in_tokens=0, out_tokens=0):
@@ -55,12 +91,22 @@ def bump_run(run_id: str | None, credits=0, calls=0, in_tokens=0, out_tokens=0):
 
 def _bump_run(run_id, credits, calls, in_tokens, out_tokens):
     db = get_db()
-    r = db.table("runs").select("credits_used,llm_calls,llm_input_tokens,llm_output_tokens").eq("id", run_id).single().execute().data
+    r = db.table("runs").select("credits_used,llm_calls,llm_input_tokens,llm_output_tokens,stage,counters").eq("id", run_id).single().execute().data
+    counters = dict(r.get("counters") or {})
+    stage = r.get("stage")
+    if stage:  # what each stage has used, so each stage can have its own limit
+        su = dict(counters.get("stage_usage") or {})
+        cur = dict(su.get(stage) or {})
+        cur["credits"] = cur.get("credits", 0) + credits
+        cur["llm_calls"] = cur.get("llm_calls", 0) + calls
+        su[stage] = cur
+        counters["stage_usage"] = su
     db.table("runs").update({
         "credits_used": (r["credits_used"] or 0) + credits,
         "llm_calls": (r["llm_calls"] or 0) + calls,
         "llm_input_tokens": (r["llm_input_tokens"] or 0) + in_tokens,
         "llm_output_tokens": (r["llm_output_tokens"] or 0) + out_tokens,
+        "counters": counters,
     }).eq("id", run_id).execute()
 
 
