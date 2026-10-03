@@ -1,0 +1,19 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+dist/
+.pytest_cache/
+.env.*
+!.env.example
+*.egg-info/
+build/
+.DS_Store
+
+# private working notes
+plan.md
+PROGRESS.md
+# recorded API responses hold a real CV and scraped third-party pages. Only the hand-built Gmail one is public.
+backend/tests/fixtures/*
+!backend/tests/fixtures/gmail_thread.json

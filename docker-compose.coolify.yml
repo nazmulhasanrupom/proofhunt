@@ -1,0 +1,53 @@
+# Proofhunt on Coolify (or any host with a reverse proxy).
+# Only `web` is public. It also forwards /api to the API, so you need ONE domain and no CORS.
+# Coolify: New resource -> Docker Compose -> this file -> set the variables in the UI.
+# Domain for the `web` service:  https://proofhunt.example.com:80
+x-env: &env
+  SUPABASE_URL: ${SUPABASE_URL:?set SUPABASE_URL}
+  SUPABASE_KEY: ${SUPABASE_KEY:?set SUPABASE_KEY}
+  DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY}
+  DEEPSEEK_MODEL_FAST: ${DEEPSEEK_MODEL_FAST:-deepseek-flash}
+  DEEPSEEK_MODEL_SMART: ${DEEPSEEK_MODEL_SMART:-deepseek-v4-pro}
+  FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:?set FIRECRAWL_API_KEY}
+  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+  GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+  GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}   # https://YOUR-DOMAIN/api/auth/google/callback
+  APP_SECRET_KEY: ${APP_SECRET_KEY:?set APP_SECRET_KEY}
+  ACCESS_PASSWORD: ${ACCESS_PASSWORD:?set ACCESS_PASSWORD}
+  FRONTEND_URL: ${FRONTEND_URL:?set FRONTEND_URL}   # https://YOUR-DOMAIN
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL}   # https://YOUR-DOMAIN
+  REDIS_URL: redis://redis:6379/0
+  DRY_RUN: ${DRY_RUN:-true}
+  DEV_FIRECRAWL_CREDIT_LIMIT: ${DEV_FIRECRAWL_CREDIT_LIMIT:-}
+  DEV_LLM_CALL_LIMIT: ${DEV_LLM_CALL_LIMIT:-}
+  COMPANIES_HOUSE_API_KEY: ${COMPANIES_HOUSE_API_KEY:-}
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  api:
+    build: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    environment: *env
+    depends_on: [redis]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # Run exactly ONE worker. Two workers would send emails twice.
+  worker:
+    build: ./backend
+    command: arq app.worker.WorkerSettings
+    environment: *env
+    depends_on: [redis]
+    restart: unless-stopped
+
+  web:
+    build: ./frontend
+    depends_on: [api]
+    restart: unless-stopped

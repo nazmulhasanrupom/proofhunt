@@ -1,0 +1,90 @@
+"""Phase 9 checks: budget stops, config, login guard, stats helpers. No live calls."""
+import pytest
+
+from app import main
+from app.config import Settings
+from app.routers import stats
+from app.services import usage
+
+
+class FakeTable:
+    def __init__(self, row): self.row = row
+    def select(self, *_): return self
+    def eq(self, *_): return self
+    def single(self): return self
+    def execute(self):
+        class R: pass
+        r = R(); r.data = self.row
+        return r
+
+
+class FakeDb:
+    def __init__(self, tables): self.tables = tables
+    def table(self, name): return FakeTable(self.tables[name])
+
+
+def test_empty_dev_limits_mean_no_limit(monkeypatch):
+    monkeypatch.setenv("DEV_FIRECRAWL_CREDIT_LIMIT", "")
+    monkeypatch.setenv("DEV_LLM_CALL_LIMIT", " ")
+    s = Settings(_env_file=None)
+    assert s.dev_firecrawl_credit_limit is None and s.dev_llm_call_limit is None
+
+
+def test_credit_budget_stops(monkeypatch):
+    monkeypatch.setattr(usage.settings, "dev_firecrawl_credit_limit", 150)
+    monkeypatch.setattr(usage, "total_usage", lambda: {"credits": 148, "calls": 0})
+    monkeypatch.setattr(usage, "get_db", lambda: FakeDb({"runs": {"credits_used": 0, "campaign_id": "c"}, "campaigns": {"filters": {}}}))
+    usage.check_credit_budget(2)                      # exactly at the limit: allowed
+    with pytest.raises(usage.BudgetExceeded):
+        usage.check_credit_budget(3)                  # over: stop
+    monkeypatch.setattr(usage.settings, "dev_firecrawl_credit_limit", None)
+    usage.check_credit_budget(10_000)                 # limit cleared: no stop
+
+
+def test_per_run_credit_cap(monkeypatch):
+    monkeypatch.setattr(usage.settings, "dev_firecrawl_credit_limit", None)
+    monkeypatch.setattr(usage, "get_db", lambda: FakeDb({"runs": {"credits_used": 38, "campaign_id": "c"},
+                                                          "campaigns": {"filters": {"maxCreditsPerRun": 40}}}))
+    usage.check_credit_budget(2, "r")
+    with pytest.raises(usage.BudgetExceeded):
+        usage.check_credit_budget(3, "r")
+
+
+def test_llm_budget_stops(monkeypatch):
+    monkeypatch.setattr(usage.settings, "dev_llm_call_limit", 100)
+    monkeypatch.setattr(usage, "total_usage", lambda: {"credits": 0, "calls": 99})
+    usage.check_llm_budget()
+    monkeypatch.setattr(usage, "total_usage", lambda: {"credits": 0, "calls": 100})
+    with pytest.raises(usage.BudgetExceeded):
+        usage.check_llm_budget()
+
+
+def test_password_check(monkeypatch):
+    monkeypatch.setattr(main.settings, "access_password", "s3cret")
+    assert main.password_ok("Bearer s3cret")
+    assert main.password_ok("bearer s3cret")
+    assert not main.password_ok("Bearer wrong")
+    assert not main.password_ok("s3cret")             # needs the Bearer word
+    assert not main.password_ok("")
+
+
+def test_stats_helpers():
+    assert stats._band(85) == "80+" and stats._band(70) == "70-79" and stats._band(10) == "under 60" and stats._band(None) == "under 60"
+    rows = stats._rates({"a": [4, 1], "b": [2, 2], "c": [0, 0]})
+    assert [r["key"] for r in rows] == ["b", "a", "c"]   # best rate first
+    assert rows[0]["rate"] == 1.0 and rows[2]["rate"] == 0   # no division by zero
+
+
+def test_secret_key_errors(monkeypatch):
+    from cryptography.fernet import Fernet
+    from app.services import gmail
+    monkeypatch.setattr(gmail.settings, "app_secret_key", "not-a-key")
+    with pytest.raises(gmail.GmailError):
+        gmail.encrypt("x")
+    good, other = Fernet.generate_key().decode(), Fernet.generate_key().decode()
+    monkeypatch.setattr(gmail.settings, "app_secret_key", good)
+    saved = gmail.encrypt("refresh-token")
+    assert gmail.decrypt(saved) == "refresh-token"
+    monkeypatch.setattr(gmail.settings, "app_secret_key", other)   # key changed
+    with pytest.raises(gmail.GmailAuthError):
+        gmail.decrypt(saved)
