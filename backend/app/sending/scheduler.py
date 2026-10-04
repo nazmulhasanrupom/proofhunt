@@ -144,11 +144,17 @@ def bounce_pause(now: datetime) -> datetime | None:
     return bounce_pause_until([parse_dt(r["updated_at"]) for r in rows], now)
 
 
-def sender_name(st: dict) -> str:
+def sender_name(st: dict, profile_id: str | None = None) -> str:
+    """Settings first. Else the name in the CV of this profile (no profile given: the first CV that has a name)."""
     if st.get("sender_name"):
         return st["sender_name"]
-    p = get_db().table("profiles").select("parsed").eq("is_active", True).limit(1).execute().data
-    return ((p[0]["parsed"] or {}).get("name") or "") if p else ""
+    q = get_db().table("profiles").select("parsed")
+    if profile_id:
+        q = q.eq("id", profile_id)
+    for p in q.order("created_at").execute().data:
+        if (p["parsed"] or {}).get("name"):
+            return p["parsed"]["name"]
+    return ""
 
 
 def blockers(st: dict, now: datetime | None = None) -> list[str]:
@@ -303,13 +309,13 @@ async def _send_one(db, st: dict, m: dict, lead: dict, email: str, by_step: dict
     try:
         if env.dry_run:
             ids = {"gmail_message_id": DRY_ID, "gmail_thread_id": None, "rfc_message_id": f"<dry-run-{m['id']}@localhost>"}
-            gmail.build_message(sender_name(st), st.get("gmail_address") or "dry-run@localhost", email,
+            gmail.build_message(sender_name(st, lead.get("profile_id")), st.get("gmail_address") or "dry-run@localhost", email,
                                 m["subject"], m["body"])  # build it anyway: catches bad headers
         else:
             if step > 0 and (not root.get("gmail_thread_id") or root.get("gmail_message_id") == DRY_ID):
                 revert("failed", "step 0 was not sent through Gmail, so there is no thread to reply in")
                 return "failed: no thread"
-            msg = gmail.build_message(sender_name(st), st["gmail_address"], email, m["subject"], m["body"],
+            msg = gmail.build_message(sender_name(st, lead.get("profile_id")), st["gmail_address"], email, m["subject"], m["body"],
                                       root.get("rfc_message_id") if step > 0 else None)
             ids = await asyncio.to_thread(gmail.send, msg, root.get("gmail_thread_id") if step > 0 else None)
     except gmail.GmailAuthError as e:

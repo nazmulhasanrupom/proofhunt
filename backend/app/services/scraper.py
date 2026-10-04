@@ -9,6 +9,11 @@ async def scrape(url: str, formats: list[str], only_main_content: bool,
     """Returns {'markdown','links','raw_html','status','cached','source'}. Raises firecrawl.ScrapeError on failure."""
     db = get_db()
     cached = db.table("pages").select("markdown,raw_html").eq("company_id", company_id).eq("url", url).execute().data
+    if not cached:  # the same site may be saved under another profile: copy it, no credit
+        cached = db.table("pages").select("kind,markdown,raw_html").eq("url", url).limit(1).execute().data
+        if cached:
+            db.table("pages").upsert({"company_id": company_id, "url": url, "kind": cached[0]["kind"], "markdown": cached[0]["markdown"],
+                                      "raw_html": cached[0]["raw_html"]}, on_conflict="company_id,url").execute()
     if cached:
         return {"markdown": cached[0]["markdown"], "links": [], "raw_html": cached[0]["raw_html"],
                 "status": 200, "cached": True, "source": "saved"}

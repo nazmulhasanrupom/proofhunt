@@ -183,7 +183,7 @@ async def _handle_reply(db, lead: dict, person_email: str, st: dict, m: dict):
     frm = addr_of(gmail.header(full, "From"))
     received = datetime.fromtimestamp(int(full.get("internalDate", 0)) / 1000, tz=timezone.utc)
     row = db.table("replies").upsert({
-        "lead_id": lead["id"], "gmail_message_id": m["id"], "from_email": frm,
+        "lead_id": lead["id"], "profile_id": lead["profile_id"], "gmail_message_id": m["id"], "from_email": frm,
         "received_at": sch.iso(received), "snippet": (full.get("snippet") or clean)[:200], "body": text[:20000],
     }, on_conflict="gmail_message_id", ignore_duplicates=True).execute().data
     if not row:

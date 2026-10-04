@@ -30,34 +30,48 @@ const real: Record<string, JSX.Element> = {
   "/outbox": <OutboxPage />, "/replies": <RepliesPage />,
 };
 import { nav } from "./nav";
+import TopBar, { isShared } from "./components/TopBar";
+import NoProfile from "./components/NoProfile";
+import { useProfiles } from "./lib/profile";
 
 export default function App() {
   const [locked, setLocked] = useState(false);
   const qc = useQueryClient();
   const { pathname } = useLocation();
+  const { current, isLoading, error, reload } = useProfiles();
   useEffect(() => {
     const h = () => setLocked(true);
     window.addEventListener("auth-required", h);
     return () => window.removeEventListener("auth-required", h);
   }, []);
   if (locked) return <Login onDone={() => { setLocked(false); qc.invalidateQueries(); }} />;
+  if (isLoading) return <div className="p-6" style={{ color: "var(--text-muted)" }}>Loading…</div>;
+  if (error) return (
+    <div className="flex flex-col items-start gap-3 p-6" style={{ maxWidth: 560 }}>
+      <p>{error.message}</p>
+      <button className="btn" onClick={reload}>Try again</button>
+    </div>
+  );
   return (
     <ToastProvider>
-    <div className="flex h-full">
+    {/* A new key when you pick another profile: every page starts fresh, with no open drawer, filter or selection of the old one. */}
+    <div key={current?.id ?? "none"} className="flex h-full">
       <Sidebar />
       <CommandPalette />
       <div className="flex min-w-0 flex-1 flex-col">
+      <TopBar />
       <main className="min-h-0 flex-1">
         <ErrorBoundary resetKey={pathname}>
         <Routes>
           {nav.flatMap((g) => g.items).map((i) => (
-            <Route key={i.path} path={i.path} element={real[i.path] ?? <Placeholder />} />
+            <Route key={i.path} path={i.path}
+              element={!current && i.path !== "/profile" && !isShared(i.path) ? <NoProfile title={i.label} /> : real[i.path] ?? <Placeholder />} />
           ))}
           <Route path="*" element={<Placeholder />} />
         </Routes>
         </ErrorBoundary>
       </main>
-      <LogDock />
+      {current && <LogDock />}
       </div>
     </div>
     </ToastProvider>

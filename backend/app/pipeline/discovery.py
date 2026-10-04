@@ -65,7 +65,8 @@ async def run(run_id: str, campaign: dict, scan_cap: int):
     db = get_db()
     f = campaign["filters"]
     c = f["company"]
-    rows = [r for r in load_map(campaign["profile_id"]) if r["active"]]
+    pid = campaign["profile_id"]  # a site or a search that another profile already used is still new for this one
+    rows = [r for r in load_map(pid) if r["active"]]
     for r in rows:
         r["signals"] = [s for s in r["signals"] if s["active"]]
 
@@ -95,14 +96,14 @@ async def run(run_id: str, campaign: dict, scan_cap: int):
         if have >= scan_cap:
             break
         h = qhash(q)
-        if db.table("search_queries").select("id").eq("query_hash", h).execute().data:
-            continue  # already searched in any run
+        if db.table("search_queries").select("id").eq("profile_id", pid).eq("query_hash", h).execute().data:
+            continue  # already searched in any run of this profile
         res = await firecrawl.search(q, limit, run_id)
         db.table("search_queries").insert({
-            "run_id": run_id, "query": q, "query_hash": h, "results": res["results"],
+            "run_id": run_id, "profile_id": pid, "query": q, "query_hash": h, "results": res["results"],
             "result_count": len(res["results"]), "credits": res["credits"]}).execute()
 
-        recent = {r["domain"] for r in db.table("companies").select("domain").gte("first_seen", cutoff).execute().data}
+        recent = {r["domain"] for r in db.table("companies").select("domain").eq("profile_id", pid).gte("first_seen", cutoff).execute().data}
         cands = clean_domains(res["results"], exclude | recent)
         if not cands:
             continue
@@ -119,12 +120,12 @@ async def run(run_id: str, campaign: dict, scan_cap: int):
         for k in keep:
             if have >= scan_cap:
                 break
-            existing = db.table("companies").select("id").eq("domain", k["domain"]).execute().data
+            existing = db.table("companies").select("id").eq("profile_id", pid).eq("domain", k["domain"]).execute().data
             if existing:  # outside cooldown: reuse the row for this run
                 db.table("companies").update({"status": "new", "run_id": run_id, "fail_reason": None}).eq("id", existing[0]["id"]).execute()
             else:
                 db.table("companies").insert({
                     "domain": k["domain"], "name": k["title"], "source": "firecrawl_search",
-                    "source_ref": q, "run_id": run_id, "status": "new"}).execute()
+                    "source_ref": q, "run_id": run_id, "profile_id": pid, "status": "new"}).execute()
             have += 1
         log_event(run_id, "info", "discovery", f"query done: {q}", {"kept": len(keep), "total_companies": have})

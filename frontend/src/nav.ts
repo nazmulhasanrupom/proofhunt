@@ -4,7 +4,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-export type NavItem = { path: string; label: string; icon: LucideIcon; hint: string; action?: string };
+// shared: the page is the same for every profile (account-wide settings, credits and the block list)
+export type NavItem = { path: string; label: string; icon: LucideIcon; hint: string; action?: string; shared?: boolean };
 export type NavGroup = { label: string; items: NavItem[] };
 
 export const nav: NavGroup[] = [
@@ -28,8 +29,8 @@ export const nav: NavGroup[] = [
     { path: "/replies", label: "Replies", icon: MessageSquare, hint: "No replies yet." },
   ]},
   { label: "System", items: [
-    { path: "/usage", label: "Usage & credits", icon: BarChart3, hint: "No usage yet." },
-    { path: "/do-not-contact", label: "Do not contact", icon: Ban, hint: "The block list is empty.", action: "Add entry" },
-    { path: "/settings", label: "Settings", icon: Settings, hint: "Settings." },
+    { path: "/usage", label: "Usage & credits", icon: BarChart3, hint: "No usage yet.", shared: true },
+    { path: "/do-not-contact", label: "Do not contact", icon: Ban, hint: "The block list is empty.", action: "Add entry", shared: true },
+    { path: "/settings", label: "Settings", icon: Settings, hint: "Settings.", shared: true },
   ]},
 ];

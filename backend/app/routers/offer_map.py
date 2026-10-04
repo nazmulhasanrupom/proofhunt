@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..db import get_db
+from ..deps import ProfileId, require_profile
 from ..pipeline import offer_map as om
 
 router = APIRouter()
@@ -28,20 +29,17 @@ class RowPut(BaseModel):
 
 
 class MapPut(BaseModel):
-    profile_id: str
     rows: list[RowPut]
 
 
 @router.get("/offer-map")
-def get_map():
-    p = get_db().table("profiles").select("id").eq("is_active", True).limit(1).execute().data
-    if not p:
-        return {"profile_id": None, "rows": []}
-    return {"profile_id": p[0]["id"], "rows": om.load_map(p[0]["id"])}
+def get_map(pid: ProfileId):
+    return {"profile_id": pid, "rows": om.load_map(pid)}
 
 
 @router.put("/offer-map")
-def put_map(body: MapPut):
+def put_map(body: MapPut, pid: ProfileId):
+    require_profile(pid)
     for r in body.rows:
         for s in r.signals:
             err = om.signal_error(s.model_dump())
@@ -52,10 +50,11 @@ def put_map(body: MapPut):
     for r in body.rows:
         data = r.model_dump(exclude={"id", "signals"})
         if r.id:
-            db.table("offer_rows").update(data).eq("id", r.id).execute()
+            if not db.table("offer_rows").update(data).eq("id", r.id).eq("profile_id", pid).execute().data:
+                raise HTTPException(404, "Offer row not found in this profile")
             rid = r.id
         else:
-            rid = db.table("offer_rows").insert({**data, "profile_id": body.profile_id}).execute().data[0]["id"]
+            rid = db.table("offer_rows").insert({**data, "profile_id": pid}).execute().data[0]["id"]
         keep_rows.add(rid)
         keep_sig = set()
         for s in r.signals:
@@ -68,7 +67,7 @@ def put_map(body: MapPut):
         for old in db.table("signals").select("id").eq("offer_row_id", rid).execute().data:
             if old["id"] not in keep_sig:  # removed in UI: keep the row, switch it off (evidence may point to it)
                 db.table("signals").update({"active": False}).eq("id", old["id"]).execute()
-    for old in db.table("offer_rows").select("id").eq("profile_id", body.profile_id).execute().data:
+    for old in db.table("offer_rows").select("id").eq("profile_id", pid).execute().data:
         if old["id"] not in keep_rows:
             db.table("offer_rows").update({"active": False}).eq("id", old["id"]).execute()
-    return om.load_map(body.profile_id)
+    return om.load_map(pid)

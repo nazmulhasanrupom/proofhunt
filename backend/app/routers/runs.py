@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
 
 from ..db import get_db
+from ..deps import ProfileId
 from ..services.usage import log_event
 from ..pipeline.orchestrator import counters_for
 from ..pipeline.scope import chunks
@@ -21,8 +22,8 @@ def _with_live_counters(r: dict) -> dict:
 
 
 @router.get("/runs")
-def list_runs():
-    rows = get_db().table("runs").select("*, campaigns(name)").order("created_at", desc=True).limit(50).execute().data
+def list_runs(pid: ProfileId):
+    rows = get_db().table("runs").select("*, campaigns(name)").eq("profile_id", pid).order("created_at", desc=True).limit(50).execute().data
     return [_with_live_counters(r) for r in rows]
 
 
@@ -93,10 +94,11 @@ def events(rid: str, after: int = 0):
 
 
 @router.get("/events")
-def all_events(after: int = 0, limit: int = 150):
-    """The backend log for the whole app: runs, sending, replies, email edits. First call (after=0): the newest lines."""
+def all_events(pid: ProfileId, after: int = 0, limit: int = 150):
+    """The backend log of this profile: runs, sending, replies, email edits, plus messages for the whole app (Gmail login).
+    First call (after=0): the newest lines."""
     limit = max(1, min(limit, 300))
-    q = get_db().table("events").select("*")
+    q = get_db().table("events").select("*").or_(f"profile_id.eq.{pid},profile_id.is.null")
     if after:
         return q.gt("id", after).order("id").limit(limit).execute().data
     return list(reversed(q.order("id", desc=True).limit(limit).execute().data))

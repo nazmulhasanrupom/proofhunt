@@ -29,7 +29,7 @@ export default function OfferMapPage() {
   useEffect(() => { if (data) setRows(data.rows); }, [data]);
 
   const save = useMutation({
-    mutationFn: () => api<Row[]>("/offer-map", { method: "PUT", body: { profile_id: data!.profile_id, rows } }),
+    mutationFn: () => api<Row[]>("/offer-map", { method: "PUT", body: { rows } }),
     onSuccess: () => { toast("Offer map saved"); qc.invalidateQueries({ queryKey: ["offer-map"] }); },
     onError: (e: Error) => toast(e.message, true),
   });
