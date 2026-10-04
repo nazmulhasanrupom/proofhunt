@@ -10,7 +10,7 @@ type U = {
   days: { day: string; credits: number; llm_calls: number; tokens: number; emails: number }[];
   total: { credits: number; llm_calls: number; tokens: number; emails: number };
   credits_left: number | null;
-  per_run: { id: string; campaign: string | null; started_at: string | null; credits: number; llm_calls: number; tokens: number; qualified: number }[];
+  per_run: { id: string; campaign: string | null; profile: string | null; started_at: string | null; credits: number; llm_calls: number; tokens: number; qualified: number }[];
 };
 
 export default function UsagePage() {
@@ -44,11 +44,11 @@ export default function UsagePage() {
             <div>
               <span className="label">Per run</span>
               <table className="table">
-                <thead><tr><th>Campaign</th><th>Started</th><th>Credits</th><th>LLM calls</th><th>Tokens</th><th>Qualified</th><th>Credits per qualified</th></tr></thead>
+                <thead><tr><th>Campaign</th><th>Profile</th><th>Started</th><th>Credits</th><th>LLM calls</th><th>Tokens</th><th>Qualified</th><th>Credits per qualified</th></tr></thead>
                 <tbody>
                   {u.per_run.map((r) => (
                     <tr key={r.id} style={{ cursor: "pointer" }} onClick={() => nav(`/activity?run=${r.id}`)}>
-                      <td>{r.campaign}</td><td>{dayTime(r.started_at)}</td><td>{r.credits}</td><td>{r.llm_calls}</td><td>{r.tokens.toLocaleString()}</td>
+                      <td>{r.campaign}</td><td>{r.profile ?? "—"}</td><td>{dayTime(r.started_at)}</td><td>{r.credits}</td><td>{r.llm_calls}</td><td>{r.tokens.toLocaleString()}</td>
                       <td>{r.qualified}</td><td>{r.qualified ? (r.credits / r.qualified).toFixed(1) : "—"}</td>
                     </tr>
                   ))}

@@ -18,7 +18,7 @@ Proofhunt finds small agencies that show **real proof of a problem you can fix**
 Your CV ─► Offer map ─► Campaign ─► Discovery ─► Audit ─► Filters ─► Contact ─► Judge ─► Assets ─► Emails ─► Review ─► Send ─► Track
 ```
 
-1. **CV → offer map.** Upload a CV (PDF, DOCX, TXT). The AI turns it into an *offer map*: the services you sell, the problems they solve, and **signals** to look for on a prospect's site (a phrase, a missing tool, a tool in use, a hiring ad, or an AI check). You can edit all of it.
+1. **CV → profile → offer map.** Each CV (PDF, DOCX, TXT) is a **profile** with a name you choose, for example "SEO consultant" and "Web developer". Every page shows one profile at a time (the dropdown in the top right corner), so campaigns, companies, leads, emails and replies never mix. The AI turns the CV into an *offer map*: the services you sell, the problems they solve, and **signals** to look for on a prospect's site (a phrase, a missing tool, a tool in use, a hiring ad, or an AI check). You can edit all of it.
 2. **Campaign.** Pick countries, company size, job titles and keywords. The form shows the Firecrawl credit cost before you start.
 3. **Discovery.** Firecrawl search finds agency websites. Directory and list sites are dropped. Each domain is cleaned and de-duplicated.
 4. **Audit.** Proofhunt reads up to 4 pages per company (home, about, contact, careers/services). Crawl4AI reads them first, Firecrawl is the fallback. Pages are saved and never fetched twice.
@@ -69,7 +69,7 @@ cp .env.example .env
 ### 2. Set up Supabase
 
 1. Create a project at supabase.com.
-2. Open **SQL Editor**. Paste and run `backend/migrations/001_init.sql`. Then run `backend/migrations/002_firecrawl_balance.sql`.
+2. Open **SQL Editor**. Paste and run `backend/migrations/001_init.sql`. Then run `backend/migrations/002_firecrawl_balance.sql`. Then run `backend/migrations/003_profiles.sql`.
 3. Open **Project Settings → API**. Copy the **Project URL** and the **service_role** key.
    The `service_role` key has full database access. It goes only in `.env` on your server. Never put it in a browser or a public place.
 
@@ -112,7 +112,7 @@ Open **http://localhost:5173**. Check http://localhost:8000/health. It should sa
 ### 6. First steps in the app
 
 1. **Settings:** enter sender name, title and postal address. Press **Connect Gmail**. Enter your Firecrawl starting balance.
-2. **Profile & CV:** upload your CV. Press **Generate offer map**. Read it and edit it.
+2. **Profile & CV:** press **New profile**, give it a name and add a CV. Press **Generate offer map**. Read it and edit it. For another CV, press **New profile** again. Pick the profile you work in with the dropdown in the top right corner.
 3. **Campaigns → New campaign.** Start with a **small** one: `maxCompaniesToScan = 3`. Press start.
 4. **Activity** shows the live log. **Companies** and **Leads** show the results. Open any row to see the quotes behind it.
 5. **Review queue:** read the drafts. Approve or skip.
@@ -171,15 +171,15 @@ The same thing works on any host:
 |---|---|
 | Dashboard | Qualified leads, sent this week, reply rate, credits left, funnel, top signals, hot replies |
 | Activity / Runs | Pick any run. See its companies, per-stage usage and live log. Pause, resume, cancel. **Continue** picks up companies a stage limit left behind. **Qualify the N found** stops searching and qualifies what a paused run already found |
-| Profile & CV / Offer map | Upload a CV. Edit services, problems, proof and signals |
+| Profile & CV / Offer map | Create, rename and delete profiles (one CV each), or replace a profile's CV. Edit services, problems, proof and signals |
 | Campaigns | Filters and the credit estimate. Click a campaign (or **Edit**) to change it |
 | Companies | Every company with facts, quotes, people and the judgment. **Qualify** one company, or tick several (or select all) and press **Qualify selected**. You choose whose filters decide. It starts a manual run you can watch in Activity. Saved pages and saved AI work are reused. A company that was only filtered out is checked against the filters again for free, so widening a campaign's size range and pressing Qualify is enough. You can also **set the status by hand** (one or many) and fix a wrong size or country in the drawer |
 | Leads | Board (drag to change stage) or table. Emails, report, demo, notes |
 | Review queue | Approve, edit, regenerate or skip drafts |
 | Outbox / Replies | Scheduled and sent emails. **Edit**, **Unapprove** (back to draft, or back to the Review queue if nothing was sent) or **Delete** any email that is not sent yet. Replies with a label (interested, not now, …) |
-| Usage & credits | Credits, tokens and emails per day. Cost per qualified lead |
-| Do not contact | Block an email or a whole domain |
-| Settings | Gmail, sender info, limits, send window, follow-up days |
+| Usage & credits | Credits, tokens and emails per day, for all profiles together (credits are one account). Cost per qualified lead |
+| Do not contact | Block an email or a whole domain. Shared by all profiles: a "no" holds for every CV |
+| Settings | Gmail, sender info, limits, send window, follow-up days. Shared by all profiles: one Gmail, one daily cap, one send queue |
 
 `Ctrl+K` jumps to any page, company or lead. The **Log** bar at the bottom of every page shows what the backend is doing right now (runs, sending, replies, email edits).
 
@@ -227,13 +227,13 @@ Companies with a good score become **leads** in stage `ready`. They wait for you
 docker compose exec api sh -c "pip install -q pytest && python -m pytest -q tests"
 ```
 
-34 tests. They never call a live service.
+41 tests. They never call a live service.
 
 ## If something goes wrong
 
 | Problem | Fix |
 |---|---|
-| `/health` shows `db: error` | Check `SUPABASE_URL` and `SUPABASE_KEY`. Check you ran both migrations |
+| `/health` shows `db: error` | Check `SUPABASE_URL` and `SUPABASE_KEY`. Check you ran all three migrations. The app shows "The database is not updated yet" until `003_profiles.sql` is run |
 | A run stopped | Runs → open it → **Resume**. A worker restart pauses running runs on purpose |
 | "Budget stop" in the log | You hit a limit. Raise or clear it in `.env`, then Resume |
 | "Reconnect Gmail" | Settings → Reconnect Gmail (Google test mode expires every 7 days) |

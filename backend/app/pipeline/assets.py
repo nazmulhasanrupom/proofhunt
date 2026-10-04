@@ -24,7 +24,7 @@ def lead_context(lead: dict) -> dict:
     p = db.table("people").select("*").eq("id", lead["person_id"]).single().execute().data
     ev_ids = j.get("evidence_ids") or []
     ev = db.table("evidence").select("id,kind,quote,url").in_("id", ev_ids).execute().data if ev_ids else []
-    prof = db.table("profiles").select("parsed").eq("is_active", True).limit(1).execute().data
+    prof = db.table("profiles").select("parsed").eq("id", lead["profile_id"]).execute().data
     parsed = prof[0]["parsed"] if prof else {}
     return {"company": c, "judgment": j, "person": p, "evidence": ev, "cv": parsed}
 

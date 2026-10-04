@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from ..config import settings as env
 from ..db import get_db
+from ..deps import ProfileId
 from ..sending.scheduler import DRY_ID
 
 router = APIRouter()
@@ -47,15 +48,17 @@ def _rates(buckets: dict[str, list[int]]) -> list[dict]:
 
 
 @router.get("/stats")
-def stats():
+def stats(pid: ProfileId):
+    """Numbers of one profile. (People, judgments and evidence are only looked up by the ids of this profile's companies and leads.)"""
     db = get_db()
     since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
 
-    companies = _all("companies", "id,status,last_audited_at,country,size_bucket")
-    people_ok = {p["company_id"] for p in _all("people", "company_id", lambda q: q.eq("selected", True).not_.is_("email", "null"))}
-    leads = _all("leads", "id,company_id,person_id,stage,score,judgment_id")
-    sent_msgs = _all("messages", "lead_id,sent_at,gmail_message_id", lambda q: q.eq("status", "sent"))
-    replies = _all("replies", "lead_id,classification")
+    companies = _all("companies", "id,status,last_audited_at,country,size_bucket", lambda q: q.eq("profile_id", pid))
+    comp_ids = {c["id"] for c in companies}
+    people_ok = {p["company_id"] for p in _all("people", "company_id", lambda q: q.eq("selected", True).not_.is_("email", "null"))} & comp_ids
+    leads = _all("leads", "id,company_id,person_id,stage,score,judgment_id", lambda q: q.eq("profile_id", pid))
+    sent_msgs = _all("messages", "lead_id,sent_at,gmail_message_id", lambda q: q.eq("status", "sent").eq("profile_id", pid))
+    replies = _all("replies", "lead_id,classification", lambda q: q.eq("profile_id", pid))
 
     sent_leads = {m["lead_id"] for m in sent_msgs}
     replied_leads = {r["lead_id"] for r in replies if r["classification"] not in NO_REPLY}
@@ -104,7 +107,7 @@ def stats():
     by = {k: _rates(v) for k, v in dims.items()}
 
     hot = (db.table("replies").select("id,from_email,received_at,snippet,leads(id, companies(domain,name))")
-           .eq("classification", HOT).order("received_at", desc=True).limit(8).execute().data)
+           .eq("profile_id", pid).eq("classification", HOT).order("received_at", desc=True).limit(8).execute().data)
     real_week = [m for m in sent_msgs if m["sent_at"] and m["sent_at"] >= since and m["gmail_message_id"] != DRY_ID]
     dry_week = [m for m in sent_msgs if m["sent_at"] and m["sent_at"] >= since and m["gmail_message_id"] == DRY_ID]
     n_sent, n_replied = len(sent_leads), len(replied_leads)
@@ -145,10 +148,10 @@ def usage(days: int = 30):
             "emails": r.get("emails_sent") or 0,
         })
     total = {k: sum(d[k] for d in out) for k in ("credits", "llm_calls", "tokens", "emails")}
-    runs = (get_db().table("runs").select("id,credits_used,llm_calls,llm_input_tokens,llm_output_tokens,counters,campaigns(name),started_at")
+    runs = (get_db().table("runs").select("id,credits_used,llm_calls,llm_input_tokens,llm_output_tokens,counters,campaigns(name),profiles(name),started_at")
             .order("created_at", desc=True).limit(20).execute().data)
     per_run = [{
-        "id": r["id"], "campaign": (r.get("campaigns") or {}).get("name"), "started_at": r["started_at"],
+        "id": r["id"], "campaign": (r.get("campaigns") or {}).get("name"), "profile": (r.get("profiles") or {}).get("name"), "started_at": r["started_at"],
         "credits": r["credits_used"] or 0, "llm_calls": r["llm_calls"] or 0,
         "tokens": (r["llm_input_tokens"] or 0) + (r["llm_output_tokens"] or 0),
         "qualified": (r["counters"] or {}).get("qualified", 0),
@@ -157,13 +160,13 @@ def usage(days: int = 30):
 
 
 @router.get("/counts")
-def counts():
-    """Sidebar badges. Unread replies are worked out in the browser (it keeps the last-seen time)."""
+def counts(pid: ProfileId):
+    """Sidebar badges of one profile. Unread replies are worked out in the browser (it keeps the last-seen time)."""
     return {
-        "leads": _count("leads", lambda q: q.eq("stage", "new")),
-        "review": _count("leads", lambda q: q.eq("stage", "ready")),
+        "leads": _count("leads", lambda q: q.eq("profile_id", pid).eq("stage", "new")),
+        "review": _count("leads", lambda q: q.eq("profile_id", pid).eq("stage", "ready")),
         "reply_times": [r["received_at"] for r in
-                        get_db().table("replies").select("received_at").order("received_at", desc=True).limit(200).execute().data],
+                        get_db().table("replies").select("received_at").eq("profile_id", pid).order("received_at", desc=True).limit(200).execute().data],
     }
 
 

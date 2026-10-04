@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from ..db import get_db
+from ..deps import ProfileId
 from ..pipeline import sequences
 
 router = APIRouter()
@@ -17,12 +18,12 @@ class DemoUrl(BaseModel):
 
 
 @router.get("/leads")
-def list_leads(stage: str | None = None, q: str | None = None, page: int = 0):
-    qry = get_db().table("leads").select("*, companies(domain,name,country), people(name,title,email)")
+def list_leads(pid: ProfileId, stage: str | None = None, q: str | None = None, page: int = 0):
+    qry = get_db().table("leads").select("*, companies(domain,name,country), people(name,title,email)").eq("profile_id", pid)
     if stage:
         qry = qry.eq("stage", stage)
     if q:
-        ids = [c["id"] for c in get_db().table("companies").select("id").or_(f"domain.ilike.%{q}%,name.ilike.%{q}%").limit(200).execute().data]
+        ids = [c["id"] for c in get_db().table("companies").select("id").eq("profile_id", pid).or_(f"domain.ilike.%{q}%,name.ilike.%{q}%").limit(200).execute().data]
         qry = qry.in_("company_id", ids or ["00000000-0000-0000-0000-000000000000"])
     return qry.order("created_at", desc=True).range(page * 50, page * 50 + 49).execute().data
 
@@ -64,9 +65,9 @@ async def regenerate(lid: str):
 
 
 @router.get("/review")
-def review_queue():
+def review_queue(pid: ProfileId):
     db = get_db()
-    leads = db.table("leads").select("*, companies(domain,name), people(name,title,email,email_kind), judgments(problem,fix,fit_score)").eq("stage", "ready").order("score", desc=True).execute().data
+    leads = db.table("leads").select("*, companies(domain,name), people(name,title,email,email_kind), judgments(problem,fix,fit_score)").eq("profile_id", pid).eq("stage", "ready").order("score", desc=True).execute().data
     for l in leads:
         l["messages"] = db.table("messages").select("*").eq("lead_id", l["id"]).order("step").execute().data
         ids = sorted({i for m in l["messages"] for i in (m["evidence_ids"] or [])})

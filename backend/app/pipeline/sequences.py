@@ -102,7 +102,7 @@ async def build_sequence(lead: dict, run_id: str | None):
     rows = []
     for e in emails:
         rows.append({
-            "lead_id": lead["id"], "step": e["step"],
+            "lead_id": lead["id"], "profile_id": lead["profile_id"], "step": e["step"],
             "subject": main_subject if e["step"] == 0 else f"Re: {main_subject}",
             "body": e["body"].rstrip() + ("\n\n" + sig if sig else ""),
             "evidence_ids": [i for i in e["evidence_ids"] if i in sent_ids],

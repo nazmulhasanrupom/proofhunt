@@ -72,7 +72,7 @@ async def judge_company(c: dict, campaign: dict, run_id: str | None) -> str:
         tz = lead_timezone(c["country"], (c["facts"] or {}).get("us_state"))
         existing = db.table("leads").select("id").eq("company_id", c["id"]).execute().data
         data = {"person_id": person["id"], "campaign_id": campaign["id"], "judgment_id": j["id"],
-                "score": score, "timezone": tz}
+                "profile_id": campaign["profile_id"], "score": score, "timezone": tz}
         if existing:
             db.table("leads").update(data).eq("id", existing[0]["id"]).execute()
         else:

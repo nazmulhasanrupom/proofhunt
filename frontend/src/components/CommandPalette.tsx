@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Building2, Users, type LucideIcon } from "lucide-react";
 import { api } from "../api/client";
 import { nav } from "../nav";
+import { useProfiles } from "../lib/profile";
 
 type Item = { key: string; label: string; sub?: string; icon: LucideIcon; to: string };
 const pages: Item[] = nav.flatMap((g) => g.items.map((i) => ({ key: i.path, label: i.label, sub: g.label, icon: i.icon, to: i.path })));
@@ -15,6 +16,7 @@ export default function CommandPalette() {
   const [sel, setSel] = useState(0);
   const [term, setTerm] = useState("");
   const go = useNavigate();
+  const { current } = useProfiles();
   const input = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -28,7 +30,7 @@ export default function CommandPalette() {
   useEffect(() => { if (open) input.current?.focus(); }, [open]);
   useEffect(() => { const t = setTimeout(() => setTerm(q.trim()), 200); return () => clearTimeout(t); }, [q]);
 
-  const enabled = open && term.length >= 2;
+  const enabled = open && term.length >= 2 && !!current;  // companies and leads belong to a profile
   const co = useQuery({ queryKey: ["pal-co", term], enabled, queryFn: () => api<{ id: string; domain: string; name: string | null }[]>(`/companies?q=${encodeURIComponent(term)}`) });
   const ld = useQuery({ queryKey: ["pal-ld", term], enabled, queryFn: () => api<{ id: string; stage: string; companies: { domain: string; name: string | null } }[]>(`/leads?q=${encodeURIComponent(term)}`) });
 

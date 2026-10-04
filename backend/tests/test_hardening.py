@@ -195,6 +195,7 @@ def test_scraper_falls_back_to_firecrawl(monkeypatch):
         def table(self, _): return self
         def select(self, *_): return self
         def eq(self, *_): return self
+        def limit(self, *_): return self
         def upsert(self, row, **_): self.rows.append(row); return self
         def execute(self):
             class R: data = []

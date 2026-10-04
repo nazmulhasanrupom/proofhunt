@@ -110,10 +110,29 @@ def _bump_run(run_id, credits, calls, in_tokens, out_tokens):
     }).eq("id", run_id).execute()
 
 
-def log_event(run_id, level, stage, message, data=None, lead_id=None):
+_profile_of: dict[str, str] = {}  # run or lead id -> profile id. Neither ever changes profile, so this never goes stale
+
+
+def _profile_for(run_id: str | None, lead_id: str | None) -> str | None:
+    for table, key in (("runs", run_id), ("leads", lead_id)):
+        if not key:
+            continue
+        if key in _profile_of:
+            return _profile_of[key]
+        rows = get_db().table(table).select("profile_id").eq("id", key).execute().data
+        if rows and rows[0].get("profile_id"):
+            if len(_profile_of) > 5000:
+                _profile_of.clear()
+            _profile_of[key] = rows[0]["profile_id"]
+            return rows[0]["profile_id"]
+    return None
+
+
+def log_event(run_id, level, stage, message, data=None, lead_id=None, profile_id=None):
+    """profile_id is found from the run or the lead when not given. No profile at all = a message for the whole app."""
     try:
         get_db().table("events").insert({
-            "run_id": run_id, "lead_id": lead_id, "level": level,
+            "run_id": run_id, "lead_id": lead_id, "level": level, "profile_id": profile_id or _profile_for(run_id, lead_id),
             "stage": stage, "message": message, "data": data,
         }).execute()
     except Exception:

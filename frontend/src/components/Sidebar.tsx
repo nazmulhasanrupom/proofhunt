@@ -3,13 +3,15 @@ import { useQuery } from "@tanstack/react-query";
 import { nav } from "../nav";
 import { api } from "../api/client";
 import { useSeenAt } from "../lib/unread";
+import { useProfiles } from "../lib/profile";
 
 export default function Sidebar() {
+  const { current } = useProfiles();
   const { data: s } = useQuery({
     queryKey: ["settings"], refetchInterval: 60000,
     queryFn: () => api<{ sender_name: string | null; gmail_connected: boolean; gmail_address: string | null }>("/settings"),
   });
-  const { data: c } = useQuery({ queryKey: ["counts"], refetchInterval: 30000, queryFn: () => api<{ leads: number; review: number; reply_times: string[] }>("/counts") });
+  const { data: c } = useQuery({ queryKey: ["counts"], enabled: !!current, refetchInterval: 30000, queryFn: () => api<{ leads: number; review: number; reply_times: string[] }>("/counts") });
   const seen = useSeenAt();
   const badge: Record<string, number> = {
     "/leads": c?.leads ?? 0, "/review": c?.review ?? 0, "/replies": c?.reply_times.filter((t) => t > seen).length ?? 0,

@@ -4,6 +4,11 @@ const KEY = "accessPassword";
 export const getPassword = () => { try { return localStorage.getItem(KEY) ?? ""; } catch { return ""; } };
 export const setPassword = (v: string) => { try { v ? localStorage.setItem(KEY, v) : localStorage.removeItem(KEY); } catch { /* private mode */ } };
 
+// The profile every call is for. ProfileProvider sets it. Sent as X-Profile-Id.
+let activeProfile = "";
+export const setActiveProfile = (id: string) => { activeProfile = id; };
+export const getActiveProfile = () => activeProfile;
+
 export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message); }
 }
@@ -13,6 +18,7 @@ export async function api<T>(path: string, opts: { method?: string; body?: unkno
   if (opts.body) headers["Content-Type"] = "application/json";
   const pw = getPassword();
   if (pw) headers["Authorization"] = `Bearer ${pw}`;
+  if (activeProfile) headers["X-Profile-Id"] = activeProfile;
   let res: Response;
   try {
     res = await fetch(BASE + path, {
