@@ -92,11 +92,11 @@ async def judge_company(c: dict, campaign: dict, run_id: str | None) -> str:
     return status
 
 
-async def run(run_id: str, campaign: dict, should_stop, ids: list[str] | None = None):
+async def run(run_id: str, campaign: dict, should_stop, ids: list[str] | None = None, stop_when=None):
     db = get_db()
     todo = scope_todo(run_id, ["contacted"], ids)
     for c in todo:
-        if should_stop():
+        if should_stop() or (stop_when and stop_when()):  # stop_when: the leads wanted exist. The rest stays 'contacted'
             return
         try:
             status = await judge_company(c, campaign, run_id)

@@ -58,10 +58,23 @@ def run_companies(rid: str):
     return rows
 
 
+def _move(rid: str, to: str, verb: str, allowed: list[str]) -> dict:
+    """Change the status, and say so honestly. It used to answer OK even when nothing changed."""
+    db = get_db()
+    row = db.table("runs").select("status").eq("id", rid).execute().data
+    if not row:
+        raise HTTPException(404, "Run not found")
+    if row[0]["status"] == to:
+        return {"ok": True, "status": to}  # a second click
+    if not db.table("runs").update({"status": to}).eq("id", rid).in_("status", allowed).execute().data:
+        raise HTTPException(409, f"This run is {row[0]['status']}. It cannot be {verb} now.")
+    log_event(rid, "info", "run", f"run {to} by hand. The worker stops before its next Firecrawl or AI call")
+    return {"ok": True, "status": to}
+
+
 @router.post("/runs/{rid}/pause")
 def pause(rid: str):
-    get_db().table("runs").update({"status": "paused"}).eq("id", rid).eq("status", "running").execute()
-    return {"ok": True}
+    return _move(rid, "paused", "paused", ["queued", "running"])
 
 
 @router.post("/runs/{rid}/resume")
@@ -84,8 +97,7 @@ async def resume(rid: str, request: Request):
 
 @router.post("/runs/{rid}/cancel")
 def cancel(rid: str):
-    get_db().table("runs").update({"status": "cancelled"}).eq("id", rid).in_("status", ["queued", "running", "paused"]).execute()
-    return {"ok": True}
+    return _move(rid, "cancelled", "cancelled", ["queued", "running", "paused"])
 
 
 @router.get("/runs/{rid}/events")

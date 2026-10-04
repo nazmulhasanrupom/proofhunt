@@ -170,7 +170,7 @@ The same thing works on any host:
 | Page | What it does |
 |---|---|
 | Dashboard | Qualified leads, sent this week, reply rate, credits left, funnel, top signals, hot replies |
-| Activity / Runs | Pick any run. See its companies, per-stage usage and live log. Pause, resume, cancel. **Continue** picks up companies a stage limit left behind. **Qualify the N found** stops searching and qualifies what a paused run already found |
+| Activity / Runs | Pick any run. See its companies, per-stage usage and live log. Pause, resume, cancel. **Pause and Cancel stop all spending**: no Firecrawl or AI call starts after you press them, in any stage. A run works in batches of 10 companies (search, read, contact, judge) and **stops as soon as "Leads wanted" is reached**, so no credits go to companies you do not need. To get more, raise "Leads wanted" in the campaign and press **Continue**. A manual Qualify run does not use that limit. **Continue** picks up companies a stage limit left behind. **Qualify the N found** stops searching and qualifies what a paused run already found |
 | Profile & CV / Offer map | Create, rename and delete profiles (one CV each), or replace a profile's CV. Edit services, problems, proof and signals |
 | Campaigns | Filters and the credit estimate. Click a campaign (or **Edit**) to change it. **AI recommended fill** (in the form, and on each campaign) writes every field for you to review, with **Undo AI fill**. **Any country** removes the country filter and the country in the searches |
 | Companies | Every company with facts, quotes, people and the judgment. **Qualify** one company, or tick several (or select all) and press **Qualify selected**. You choose whose filters decide. It starts a manual run you can watch in Activity. Saved pages and saved AI work are reused. A company that was only filtered out is checked against the filters again for free, so widening a campaign's size range and pressing Qualify is enough. You can also **set the status by hand** (one or many) and fix a wrong size or country in the drawer |
@@ -227,7 +227,7 @@ Companies with a good score become **leads** in stage `ready`. They wait for you
 docker compose exec api sh -c "pip install -q pytest && python -m pytest -q tests"
 ```
 
-54 tests. They never call a live service.
+77 tests. They never call a live service.
 
 ## If something goes wrong
 

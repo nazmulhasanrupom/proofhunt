@@ -42,7 +42,7 @@ export default function ActivityPage() {
     if (what === "cancel" && !confirm("Cancel this run?")) return;
     try {
       await api(`/runs/${runId}/${what}`, { method: "POST" });
-      toast(what === "resume" ? "Continuing" : `Run ${what === "pause" ? "paused" : "cancelled"}`);
+      toast(what === "resume" ? "Continuing" : what === "pause" ? "Paused. Nothing more is spent; the worker stops before its next Firecrawl or AI call" : "Run cancelled. Nothing more is spent");
       qc.invalidateQueries({ queryKey: ["run", runId] }); qc.invalidateQueries({ queryKey: ["runs"] });
     } catch (e) { toast((e as Error).message, true); }
   };
@@ -83,7 +83,7 @@ export default function ActivityPage() {
           {r && ["paused", "failed"].includes(r.status) && !r.counters?.manual && waiting.length > 0 && (
             <button className="btn-primary" title="Stop searching for new companies. Qualify the ones already found." onClick={qualifyRest}>Qualify the {waiting.length} found</button>
           )}
-          {r?.status === "running" && <button className="btn" onClick={() => act("pause")}>Pause</button>}
+          {r && ["queued", "running"].includes(r.status) && <button className="btn" onClick={() => act("pause")}>Pause</button>}
           {r && ["paused", "failed"].includes(r.status) && <button className="btn" onClick={() => act("resume")}>Resume</button>}
           {r?.status === "done" && <button className="btn" title="Pick up companies a stage limit left behind. Every stage gets a fresh limit." onClick={() => act("resume")}>Continue</button>}
           {r && ["queued", "running", "paused"].includes(r.status) && <button className="btn btn-danger" onClick={() => act("cancel")}>Cancel</button>}

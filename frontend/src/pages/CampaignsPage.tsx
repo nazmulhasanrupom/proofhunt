@@ -130,7 +130,7 @@ export default function CampaignsPage() {
               )}
             </div>
             <div className="grid grid-cols-4 gap-3">
-              <Num label="Leads wanted" value={f.leadsWanted} onChange={(n) => set("leadsWanted", n)} />
+              <Num label="Leads wanted (the run stops here)" value={f.leadsWanted} onChange={(n) => set("leadsWanted", n)} />
               <Num label="Max companies to scan" value={f.maxCompaniesToScan} onChange={(n) => set("maxCompaniesToScan", n)} />
               <Num label="Cooldown days" value={f.company.cooldownDays} onChange={(n) => set("company", { ...f.company, cooldownDays: n })} />
               <Num label="Credit cap for the whole run" value={f.maxCreditsPerRun} onChange={(n) => set("maxCreditsPerRun", n)} />

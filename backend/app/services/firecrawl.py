@@ -69,6 +69,8 @@ async def _post(path: str, body: dict, run_id: str | None = None) -> dict:
     retries = max(0, settings.firecrawl_max_retries)
     async with httpx.AsyncClient(timeout=90) as client:
         for attempt in range(retries + 1):
+            if attempt:  # we waited after a 429: the run may have been paused or cancelled meanwhile
+                await asyncio.to_thread(usage.check_run_active, run_id)
             async with _slots:
                 await _pace()
                 r = await client.post(f"{BASE}{path}", json=body, headers=headers)

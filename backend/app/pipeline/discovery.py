@@ -61,8 +61,11 @@ def clean_domains(results: list[dict], exclude: set[str]) -> list[dict]:
     return out
 
 
-async def run(run_id: str, campaign: dict, scan_cap: int):
-    """Find clean agency domains until `scan_cap` companies exist for this run."""
+async def run(run_id: str, campaign: dict, scan_cap: int, should_stop=lambda: False, round_cap: int | None = None):
+    """Find clean agency domains until `scan_cap` companies exist for this run. Stops when the run is paused or cancelled.
+    With `round_cap` it stops searching once that many companies exist (a round), and a later call goes on from there.
+    Every search is used up to the end: its results are saved even when they pass the round cap."""
+    target = min(scan_cap, round_cap) if round_cap else scan_cap
     db = get_db()
     f = campaign["filters"]
     c = f["company"]
@@ -72,7 +75,7 @@ async def run(run_id: str, campaign: dict, scan_cap: int):
         r["signals"] = [s for s in r["signals"] if s["active"]]
 
     have = db.table("companies").select("id", count="exact").eq("run_id", run_id).execute().count or 0
-    if have >= scan_cap:
+    if have >= target:
         return
 
     n_queries = max(1, scan_cap // 5)
@@ -80,6 +83,11 @@ async def run(run_id: str, campaign: dict, scan_cap: int):
     extra = 0
     if len(queries) < n_queries:
         extra = min(20, n_queries - len(queries))
+    if extra:  # the AI's extra queries are only needed once every keyword query was searched (this is called again and again, a round at a time)
+        done = {r["query_hash"] for r in db.table("search_queries").select("query_hash").eq("profile_id", pid)
+                .in_("query_hash", [qhash(q) for q in queries]).execute().data}
+        if any(qhash(q) not in done for q in queries):
+            extra = 0
     if extra:
         out = await llm.complete_json(
             "queries", "fast", llm.load_prompt("queries"),
@@ -94,7 +102,7 @@ async def run(run_id: str, campaign: dict, scan_cap: int):
     limit = 20 if scan_cap >= 20 else 10
 
     for q in queries:
-        if have >= scan_cap:
+        if have >= target or should_stop():
             break
         h = qhash(q)
         if db.table("search_queries").select("id").eq("profile_id", pid).eq("query_hash", h).execute().data:
@@ -119,7 +127,7 @@ async def run(run_id: str, campaign: dict, scan_cap: int):
             verdicts = {v["i"]: v["verdict"] for v in out["results"]}
             keep += [b for j, b in enumerate(batch) if verdicts.get(j, "unsure") != "no"]
         for k in keep:
-            if have >= scan_cap:
+            if have >= scan_cap or should_stop():
                 break
             existing = db.table("companies").select("id").eq("profile_id", pid).eq("domain", k["domain"]).execute().data
             if existing:  # outside cooldown: reuse the row for this run

@@ -12,6 +12,15 @@ class BudgetExceeded(Exception):
     """A hard stop. The run pauses."""
 
 
+class RunStopped(BudgetExceeded):
+    """You paused or cancelled the run. Raised before any Firecrawl or AI call, so nothing is spent after a stop,
+    whatever stage the run is in. It is a BudgetExceeded on purpose: every stage already knows to leave its company
+    for the next time and to pass this up. Only the run itself tells the two apart (it keeps the status you set)."""
+
+
+STOPPED = ("paused", "cancelled")
+
+
 class StageLimitReached(BudgetExceeded):
     """One stage used up its own limit. The run does NOT pause: it moves on to the next stage."""
 
@@ -25,7 +34,9 @@ STAGE_DEFAULTS = {"credits": 500, "llm_calls": 300}
 
 def _stage_state(run_id: str) -> tuple[str | None, dict, dict]:
     """(stage, usage of that stage so far, campaign filters)"""
-    run = get_db().table("runs").select("stage,counters,campaign_id").eq("id", run_id).single().execute().data
+    run = get_db().table("runs").select("stage,counters,campaign_id,status").eq("id", run_id).single().execute().data
+    if run.get("status") in STOPPED:
+        raise RunStopped(f"the run is {run['status']}")
     camp = get_db().table("campaigns").select("filters").eq("id", run["campaign_id"]).single().execute().data
     stage = run.get("stage")
     used = ((run.get("counters") or {}).get("stage_usage") or {}).get(stage) or {}
@@ -44,6 +55,15 @@ def check_stage_limit(run_id: str | None, what: str, cost: int):
     now = used.get(what, 0)
     if now + cost > limit:
         raise StageLimitReached(stage, "Firecrawl credit" if what == "credits" else "AI call", now, limit)
+
+
+def check_run_active(run_id: str | None):
+    """Raises RunStopped when the run was paused or cancelled. For waits and retries that do not pass the checks above."""
+    if not run_id:
+        return
+    row = get_db().table("runs").select("status").eq("id", run_id).execute().data
+    if row and row[0]["status"] in STOPPED:
+        raise RunStopped(f"the run is {row[0]['status']}")
 
 
 def add_usage(credits=0, calls=0, in_tokens=0, out_tokens=0, emails=0):

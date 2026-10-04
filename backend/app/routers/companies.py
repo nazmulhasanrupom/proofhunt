@@ -206,5 +206,5 @@ async def rejudge(cid: str):
     c = db.table("companies").select("*").eq("id", cid).single().execute().data
     run = db.table("runs").select("campaign_id").eq("id", c["run_id"]).single().execute().data
     camp = db.table("campaigns").select("*").eq("id", run["campaign_id"]).single().execute().data
-    status = await judge_mod.judge_company(c, camp, c["run_id"])
+    status = await judge_mod.judge_company(c, camp, None)  # not counted in the old run: it may be paused or cancelled by now
     return {"status": status}
