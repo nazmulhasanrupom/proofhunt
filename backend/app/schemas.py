@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field
 
 
 class CompanyFilters(BaseModel):
+    anyCountry: bool = False          # true: every country is allowed and searches have no country in them. `countries` is then ignored
     countries: list[str] = ["United States", "United Kingdom", "Canada", "Australia"]
     employeeRanges: list[list[int]] = [[1, 10], [11, 50]]
     allowUnknownSize: bool = True

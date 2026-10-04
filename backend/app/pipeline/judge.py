@@ -8,8 +8,15 @@ from ..services.usage import BudgetExceeded, log_event
 from .scope import todo as scope_todo
 from .offer_map import load_map
 
+# The send window is in the lead's local time. A country that is not here gets the default (New York).
 TZ = {"United States": "America/New_York", "Canada": "America/Toronto",
-      "United Kingdom": "Europe/London", "Australia": "Australia/Sydney"}
+      "United Kingdom": "Europe/London", "Australia": "Australia/Sydney",
+      "Ireland": "Europe/Dublin", "New Zealand": "Pacific/Auckland", "Germany": "Europe/Berlin", "France": "Europe/Paris",
+      "Netherlands": "Europe/Amsterdam", "Spain": "Europe/Madrid", "Italy": "Europe/Rome", "Portugal": "Europe/Lisbon",
+      "Poland": "Europe/Warsaw", "Sweden": "Europe/Stockholm", "Denmark": "Europe/Copenhagen", "Switzerland": "Europe/Zurich",
+      "Belgium": "Europe/Brussels", "India": "Asia/Kolkata", "Singapore": "Asia/Singapore", "United Arab Emirates": "Asia/Dubai",
+      "Israel": "Asia/Jerusalem", "South Africa": "Africa/Johannesburg", "Brazil": "America/Sao_Paulo", "Mexico": "America/Mexico_City",
+      "Philippines": "Asia/Manila", "Pakistan": "Asia/Karachi", "Bangladesh": "Asia/Dhaka"}
 
 
 class JudgeOut(BaseModel):

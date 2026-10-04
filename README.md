@@ -19,7 +19,7 @@ Your CV ─► Offer map ─► Campaign ─► Discovery ─► Audit ─► Fi
 ```
 
 1. **CV → profile → offer map.** Each CV (PDF, DOCX, TXT) is a **profile** with a name you choose, for example "SEO consultant" and "Web developer". Every page shows one profile at a time (the dropdown in the top right corner), so campaigns, companies, leads, emails and replies never mix. The AI turns the CV into an *offer map*: the services you sell, the problems they solve, and **signals** to look for on a prospect's site (a phrase, a missing tool, a tool in use, a hiring ad, or an AI check). You can edit all of it.
-2. **Campaign.** Pick countries, company size, job titles and keywords. The form shows the Firecrawl credit cost before you start.
+2. **Campaign.** Pick countries (or tick **Any country**), company size, job titles and keywords. Press **AI recommended fill** and the AI fills every field, including the web keywords, from the profile's CV and offer map. Add a short note first if you want to steer it ("only the UK, teams under 20"). It never plans more than the Firecrawl credits you have left, and nothing is saved until you save. The form shows the credit cost before you start.
 3. **Discovery.** Firecrawl search finds agency websites. Directory and list sites are dropped. Each domain is cleaned and de-duplicated.
 4. **Audit.** Proofhunt reads up to 4 pages per company (home, about, contact, careers/services). Crawl4AI reads them first, Firecrawl is the fallback. Pages are saved and never fetched twice.
 5. **Extract and verify.** Code checks and the AI pull out facts. **Every quote is checked against the saved page text.** A quote that is not on the page is thrown away.
@@ -172,7 +172,7 @@ The same thing works on any host:
 | Dashboard | Qualified leads, sent this week, reply rate, credits left, funnel, top signals, hot replies |
 | Activity / Runs | Pick any run. See its companies, per-stage usage and live log. Pause, resume, cancel. **Continue** picks up companies a stage limit left behind. **Qualify the N found** stops searching and qualifies what a paused run already found |
 | Profile & CV / Offer map | Create, rename and delete profiles (one CV each), or replace a profile's CV. Edit services, problems, proof and signals |
-| Campaigns | Filters and the credit estimate. Click a campaign (or **Edit**) to change it |
+| Campaigns | Filters and the credit estimate. Click a campaign (or **Edit**) to change it. **AI recommended fill** (in the form, and on each campaign) writes every field for you to review, with **Undo AI fill**. **Any country** removes the country filter and the country in the searches |
 | Companies | Every company with facts, quotes, people and the judgment. **Qualify** one company, or tick several (or select all) and press **Qualify selected**. You choose whose filters decide. It starts a manual run you can watch in Activity. Saved pages and saved AI work are reused. A company that was only filtered out is checked against the filters again for free, so widening a campaign's size range and pressing Qualify is enough. You can also **set the status by hand** (one or many) and fix a wrong size or country in the drawer |
 | Leads | Board (drag to change stage) or table. Emails, report, demo, notes |
 | Review queue | Approve, edit, regenerate or skip drafts |
@@ -227,7 +227,7 @@ Companies with a good score become **leads** in stage `ready`. They wait for you
 docker compose exec api sh -c "pip install -q pytest && python -m pytest -q tests"
 ```
 
-41 tests. They never call a live service.
+54 tests. They never call a live service.
 
 ## If something goes wrong
 

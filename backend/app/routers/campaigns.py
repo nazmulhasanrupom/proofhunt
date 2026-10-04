@@ -1,9 +1,12 @@
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..db import get_db
 from ..deps import ProfileId, require_profile
+from ..pipeline import campaign_fill
 from ..schemas import CampaignFilters
+from ..services.usage import BudgetExceeded, log_event
+from .stats import credits_left
 
 router = APIRouter()
 
@@ -11,6 +14,28 @@ router = APIRouter()
 class CampaignIn(BaseModel):
     name: str
     filters: CampaignFilters = CampaignFilters()
+
+
+class AiFillIn(BaseModel):
+    name: str = ""
+    hint: str = Field("", max_length=500)       # what the user wants, in their own words (optional)
+    filters: CampaignFilters = CampaignFilters()  # the form now: fields the AI leaves out keep these values
+
+
+@router.post("/campaigns/ai-fill")
+async def ai_fill(body: AiFillIn, pid: ProfileId):
+    """AI recommended fill. Returns a full set of filters for the form. Nothing is saved."""
+    require_profile(pid)
+    try:
+        out = await campaign_fill.suggest(pid, body.name, body.hint, body.filters.model_dump(), credits_left())
+    except BudgetExceeded as e:
+        raise HTTPException(429, str(e))
+    except Exception as e:
+        log_event(None, "error", "campaign", f"AI recommended fill failed: {e}", profile_id=pid)
+        raise HTTPException(502, f"The AI could not make a recommendation: {str(e)[:200]}")
+    log_event(None, "info", "campaign", f"AI recommended fill made ({len(out['filters']['company']['webKeywords'])} keywords, "
+                                        f"scan {out['filters']['maxCompaniesToScan']})", profile_id=pid)
+    return out
 
 
 def _campaign(cid: str, pid: str) -> dict:

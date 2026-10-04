@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
+import { Sparkles } from "lucide-react";
 import { api } from "../api/client";
 import { useToast } from "../components/Toast";
 import ChipInput from "../components/ChipInput";
@@ -9,17 +10,19 @@ import Skeleton from "../components/Skeleton";
 
 type Filters = {
   leadsWanted: number; maxCompaniesToScan: number; maxCreditsPerRun: number; maxCreditsPerStage: number; maxLlmCallsPerStage: number; maxPerCompany: number;
-  company: { countries: string[]; employeeRanges: number[][]; allowUnknownSize: boolean; webKeywords: string[]; minKeywordHits: number; excludeDomains: string[]; cooldownDays: number };
+  company: { anyCountry: boolean; countries: string[]; employeeRanges: number[][]; allowUnknownSize: boolean; webKeywords: string[]; minKeywordHits: number; excludeDomains: string[]; cooldownDays: number };
   person: { titlePriority: string[]; excludeTitle: string[]; seniority: string[]; excludeSeniority: string[]; matchMode: string };
   qualify: { minFitScore: number; maybeFrom: number; demoFrom: number };
   email: { allowGeneric: boolean; allowNoPerson: boolean; requireMx: boolean };
 };
 type Campaign = { id: string; name: string; status: string; filters: Filters; created_at: string };
+type Fill = { name: string; why: string; notes: string[]; used_offer_map: boolean; filters: Filters };
 
 const DEFAULTS: Filters = {
   leadsWanted: 100, maxCompaniesToScan: 500, maxCreditsPerRun: 2500, maxCreditsPerStage: 500, maxLlmCallsPerStage: 300, maxPerCompany: 1,
-  company: { countries: ["United States", "United Kingdom", "Canada", "Australia"], employeeRanges: [[1, 10], [11, 50]], allowUnknownSize: true,
-    webKeywords: ["seo agency", "content marketing", "link building", "digital marketing agency", "white label seo"], minKeywordHits: 1, excludeDomains: [], cooldownDays: 180 },
+  // no keywords to start with: they depend on the profile. "AI recommended fill" writes them
+  company: { anyCountry: false, countries: ["United States", "United Kingdom", "Canada", "Australia"], employeeRanges: [[1, 10], [11, 50]], allowUnknownSize: true,
+    webKeywords: [], minKeywordHits: 1, excludeDomains: [], cooldownDays: 180 },
   person: { titlePriority: ["founder", "co-founder", "ceo", "coo", "head of operations"], excludeTitle: ["intern", "assistant", "junior", "coordinator"],
     seniority: ["owner", "c_suite"], excludeSeniority: ["intern", "entry"], matchMode: "title_or_seniority" },
   qualify: { minFitScore: 70, maybeFrom: 50, demoFrom: 85 },
@@ -49,9 +52,15 @@ export default function CampaignsPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [f, setF] = useState<Filters>(DEFAULTS);
+  const [hint, setHint] = useState("");
+  const [fillNo, setFillNo] = useState(0);  // changes after every AI fill or undo: the employee range box keeps its own text, this makes it show the new one
+  const [before, setBefore] = useState<{ name: string; f: Filters } | null>(null);  // the form as it was before the AI fill, for Undo
+  const [ai, setAi] = useState<Fill | null>(null);
+  const formNo = useRef(0);  // which form is open. An AI answer for a form that was closed meanwhile is thrown away
   const set = <K extends keyof Filters>(k: K, v: Filters[K]) => setF({ ...f, [k]: v });
   const queries = Math.max(1, Math.floor(f.maxCompaniesToScan / 5));
   const cost = f.maxCompaniesToScan * 4 + queries * 4;
+  const noKeywords = f.company.webKeywords.length === 0 && f.company.minKeywordHits > 0;  // such a campaign would drop every company
 
   const create = useMutation({
     mutationFn: () => (editId
@@ -60,8 +69,25 @@ export default function CampaignsPage() {
     onSuccess: () => { toast(editId ? "Campaign saved" : "Campaign created"); close(); qc.invalidateQueries({ queryKey: ["campaigns"] }); },
     onError: (e: Error) => toast(e.message, true),
   });
-  const close = () => { setOpen(false); setEditId(null); setName(""); setF(DEFAULTS); };
-  const edit = (c: Campaign) => { setEditId(c.id); setName(c.name); setF(withDefaults(c.filters)); setOpen(true); window.scrollTo?.(0, 0); };
+  const resetAi = () => { formNo.current++; setHint(""); setBefore(null); setAi(null); };
+  const close = () => { setOpen(false); setEditId(null); setName(""); setF(DEFAULTS); resetAi(); };
+  const openNew = () => { resetAi(); setOpen(true); };
+  const edit = (c: Campaign) => { resetAi(); setEditId(c.id); setName(c.name); setF(withDefaults(c.filters)); setOpen(true); window.scrollTo?.(0, 0); };
+  const fill = useMutation({
+    mutationFn: ({ no: _no, ...body }: { no: number; name: string; filters: Filters; hint: string }) => api<Fill>("/campaigns/ai-fill", { body }),
+    onSuccess: (r, v) => {
+      if (v.no !== formNo.current) return;
+      setBefore({ name: v.name, f: v.filters });
+      setF(withDefaults(r.filters));
+      if (!v.name.trim() && r.name) setName(r.name);
+      setFillNo((n) => n + 1);
+      setAi(r);
+      toast("AI filled the form. Read it, then save");
+    },
+    onError: (e: Error) => toast(e.message, true),
+  });
+  const undo = () => { if (!before) return; setF(before.f); setName(before.name); setFillNo((n) => n + 1); setAi(null); setBefore(null); };
+  const editAndFill = (c: Campaign) => { edit(c); fill.mutate({ no: formNo.current, name: c.name, filters: withDefaults(c.filters), hint: "" }); };
   const start = useMutation({
     mutationFn: (id: string) => api<{ id: string }>(`/campaigns/${id}/runs`, { method: "POST" }),
     onSuccess: (r) => { toast("Run started"); nav(`/activity?run=${r.id}`); },
@@ -74,12 +100,35 @@ export default function CampaignsPage() {
 
   return (
     <div className="page">
-      <div className="page-head"><span>Campaigns</span><button className="btn-primary" onClick={() => (open ? close() : setOpen(true))}>{open ? "Close" : "New campaign"}</button></div>
+      <div className="page-head"><span>Campaigns</span><button className="btn-primary" onClick={() => (open ? close() : openNew())}>{open ? "Close" : "New campaign"}</button></div>
       <div className="page-body flex flex-col gap-4">
         {open && (
           <div className="card flex flex-col gap-4" key={editId ?? "new"}>
             {editId && <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Editing a campaign. Changes apply to new runs, and to Qualify on the Companies page. Companies already filtered out are checked again with the new filters when you press Qualify.</div>}
             <div><span className="label">Name</span><input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="SEO agencies — US/UK" /></div>
+            <div className="flex flex-col gap-2 rounded-md border p-3" style={{ borderColor: "var(--border)", background: "var(--bg-2)" }}>
+              <div className="flex items-end gap-2">
+                <div className="flex-1">
+                  <span className="label">Tell the AI what you want (optional)</span>
+                  <input className="input" maxLength={500} value={hint} onChange={(e) => setHint(e.target.value)} placeholder="For example: only the UK, teams under 20, white-label link building" />
+                </div>
+                <button className="btn-primary flex items-center gap-1.5" disabled={fill.isPending} onClick={() => fill.mutate({ no: formNo.current, name, filters: f, hint })}>
+                  <Sparkles size={14} />{fill.isPending ? "Thinking…" : "AI recommended fill"}
+                </button>
+              </div>
+              <div style={{ color: "var(--text-faint)", fontSize: 12 }}>
+                The AI reads this profile's CV and offer map and fills every field below, including the web keywords. It stays inside the Firecrawl credits you have left.
+                Nothing is saved until you press {editId ? "Save changes" : "Create campaign"}.
+              </div>
+              {ai && (
+                <div className="flex flex-col gap-1" style={{ fontSize: 13 }}>
+                  {ai.why && <div><span style={{ color: "var(--text-muted)" }}>Why: </span>{ai.why}</div>}
+                  {ai.notes.map((n) => <div key={n} style={{ color: "var(--warn)" }}>{n}</div>)}
+                  {!ai.used_offer_map && <div style={{ color: "var(--warn)" }}>This profile has no offer map yet, so the AI used only the CV. Generate the offer map first for a better result.</div>}
+                  <div><button className="btn" onClick={undo}>Undo AI fill</button></div>
+                </div>
+              )}
+            </div>
             <div className="grid grid-cols-4 gap-3">
               <Num label="Leads wanted" value={f.leadsWanted} onChange={(n) => set("leadsWanted", n)} />
               <Num label="Max companies to scan" value={f.maxCompaniesToScan} onChange={(n) => set("maxCompaniesToScan", n)} />
@@ -94,11 +143,25 @@ export default function CampaignsPage() {
                 When a stage reaches its limit, the run moves on to the next stage with the companies it already has. It does not stop.
               </div>
             </div>
-            <div><span className="label">Countries</span><ChipInput value={f.company.countries} onChange={(v) => set("company", { ...f.company, countries: v })} /></div>
-            <div><span className="label">Web keywords</span><ChipInput value={f.company.webKeywords} onChange={(v) => set("company", { ...f.company, webKeywords: v })} /></div>
+            <div>
+              <div className="mb-1 flex items-center justify-between">
+                <span className="label" style={{ marginBottom: 0 }}>Countries</span>
+                <label className="flex items-center gap-1.5" style={{ fontSize: 12 }}>
+                  <input type="checkbox" checked={f.company.anyCountry} onChange={(e) => set("company", { ...f.company, anyCountry: e.target.checked })} /> Any country
+                </label>
+              </div>
+              {f.company.anyCountry
+                ? <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Companies from every country are allowed, and the searches have no country in them. Untick to pick countries again.</div>
+                : <ChipInput value={f.company.countries} onChange={(v) => set("company", { ...f.company, countries: v })} />}
+            </div>
+            <div>
+              <span className="label">Web keywords</span>
+              <ChipInput value={f.company.webKeywords} onChange={(v) => set("company", { ...f.company, webKeywords: v })} />
+              {noKeywords && <div style={{ color: "var(--warn)", fontSize: 12, marginTop: 4 }}>Add at least one keyword, or press AI recommended fill. A company needs a keyword on its site to pass.</div>}
+            </div>
             <div className="grid grid-cols-3 gap-3">
               <div><span className="label">Employee ranges (e.g. 1-10, 11-50)</span>
-                <input className="input" defaultValue={rangesText(f.company.employeeRanges)} onBlur={(e) => set("company", { ...f.company, employeeRanges: parseRanges(e.target.value) })} /></div>
+                <input className="input" key={fillNo} defaultValue={rangesText(f.company.employeeRanges)} onBlur={(e) => set("company", { ...f.company, employeeRanges: parseRanges(e.target.value) })} /></div>
               <Num label="Min keyword hits" value={f.company.minKeywordHits} onChange={(n) => set("company", { ...f.company, minKeywordHits: n })} />
               <label className="flex items-end gap-2 pb-2"><input type="checkbox" checked={f.company.allowUnknownSize} onChange={(e) => set("company", { ...f.company, allowUnknownSize: e.target.checked })} /> Allow unknown size</label>
             </div>
@@ -116,12 +179,12 @@ export default function CampaignsPage() {
             <label className="flex items-center gap-2"><input type="checkbox" checked={f.email.allowNoPerson} onChange={(e) => set("email", { ...f.email, allowNoPerson: e.target.checked })} /> Keep companies that name nobody on their site: email their generic address (info@, hello@) instead of dropping them</label>
             <div className="flex items-center justify-between">
               <span style={{ color: "var(--text-muted)" }}>Estimated cost: about {cost.toLocaleString()} Firecrawl credits ({f.maxCompaniesToScan} × 4 + {queries} queries × 4)</span>
-              <button className="btn-primary" disabled={!name.trim() || create.isPending} onClick={() => create.mutate()}>{editId ? "Save changes" : "Create campaign"}</button>
+              <button className="btn-primary" disabled={!name.trim() || noKeywords || create.isPending} onClick={() => create.mutate()}>{editId ? "Save changes" : "Create campaign"}</button>
             </div>
           </div>
         )}
         {isLoading && <Skeleton />}
-        {!isLoading && data?.length === 0 && !open && <Empty text="No campaigns yet." action="New campaign" onAction={() => setOpen(true)} />}
+        {!isLoading && data?.length === 0 && !open && <Empty text="No campaigns yet." action="New campaign" onAction={openNew} />}
         {data && data.length > 0 && (
           <table className="table">
             <thead><tr><th>Name</th><th>Companies to scan</th><th>Leads wanted</th><th>Created</th><th /></tr></thead>
@@ -131,6 +194,7 @@ export default function CampaignsPage() {
                   <td><button style={{ textDecoration: "underline", textAlign: "left" }} onClick={() => edit(c)}>{c.name}</button></td><td>{c.filters.maxCompaniesToScan}</td><td>{c.filters.leadsWanted}</td><td>{new Date(c.created_at).toLocaleDateString()}</td>
                   <td className="text-right">
                     <button className="btn" onClick={() => edit(c)}>Edit</button>{" "}
+                    <button className="btn" disabled={fill.isPending} title="Opens the campaign and lets the AI recommend every field. Nothing is saved until you press Save changes" onClick={() => editAndFill(c)}>AI recommended fill</button>{" "}
                     <button className="btn" disabled={start.isPending} onClick={() => start.mutate(c.id)}>Start run</button>{" "}
                     <button className="btn btn-danger" onClick={() => { if (confirm(`Delete "${c.name}"?`)) del.mutate(c.id); }}>Delete</button>
                   </td>

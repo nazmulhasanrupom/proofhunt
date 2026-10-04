@@ -12,7 +12,7 @@ def apply_filters(company: dict, f: dict) -> str | None:
     """Return a reason string if the company must be dropped, else None."""
     c = f["company"]
     country = company.get("country")
-    if country and c["countries"] and country not in c["countries"]:
+    if country and not c.get("anyCountry") and c["countries"] and country not in c["countries"]:
         return f"country {country} not wanted"
     size = company.get("size_estimate")
     if size:

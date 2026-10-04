@@ -40,7 +40,8 @@ def qhash(q: str) -> str:
 
 def build_queries(filters: dict, offer_rows: list[dict]) -> list[str]:
     c = filters["company"]
-    qs = [f'"{k}" agency {country}' for k in c["webKeywords"] for country in c["countries"]]
+    places = [""] if c.get("anyCountry") or not c["countries"] else c["countries"]  # no country: search the whole web
+    qs = [f'"{k}" agency {place}'.strip() for k in c["webKeywords"] for place in places]
     for r in offer_rows:
         for s in r.get("signals", []):
             if s["detector_type"] == "hiring_role":
