@@ -57,7 +57,7 @@ export default function LeadsPage() {
             <tbody>
               {data.map((l) => (
                 <tr key={l.id} style={{ cursor: "pointer" }} onClick={() => setParams({ id: l.id })}>
-                  <td>{name(l)}</td><td>{l.people?.name ?? "—"} {l.people?.email ? `· ${l.people.email}` : ""}</td><td>{l.score ?? "—"}</td>
+                  <td>{name(l)}</td><td>{l.people?.name || "(generic address)"} {l.people?.email ? `· ${l.people.email}` : ""}</td><td>{l.score ?? "—"}</td>
                   <td><span className="dot" style={{ background: stageColor(l.stage) }} />{label(l.stage)}</td><td>{dayTime(l.created_at)}</td>
                 </tr>
               ))}
@@ -79,7 +79,7 @@ export default function LeadsPage() {
                     {items.map((l) => (
                       <div key={l.id} draggable onDragStart={() => setDrag(l.id)} onClick={() => setParams({ id: l.id })} className="card" style={{ padding: 10, cursor: "grab", fontSize: 13 }}>
                         <div className="truncate font-medium">{name(l)}</div>
-                        <div className="truncate" style={{ color: "var(--text-faint)", fontSize: 12 }}>{l.people?.name ?? "No contact"} · score {l.score ?? "—"}</div>
+                        <div className="truncate" style={{ color: "var(--text-faint)", fontSize: 12 }}>{l.people?.name || "No named person"} · score {l.score ?? "—"}</div>
                       </div>
                     ))}
                   </div>
@@ -128,7 +128,7 @@ export function LeadDrawer({ id, onClose }: { id: string; onClose: () => void })
               </select>
             </div>
             <KV k="Score" v={l.score} />
-            <KV k="Contact" v={l.people ? `${l.people.name ?? "—"} · ${l.people.title ?? "—"}` : "—"} />
+            <KV k="Contact" v={l.people ? `${l.people.name || "No named person"} · ${l.people.title || "—"}` : "—"} />
             <KV k="Email" v={l.people?.email ? `${l.people.email} (${l.people.email_kind})` : "—"} />
             <KV k="Time zone" v={l.timezone} />
             {l.judgments && <><div className="label mt-3">Problem</div>{l.judgments.problem}<div className="label mt-3">Fix</div>{l.judgments.fix}</>}

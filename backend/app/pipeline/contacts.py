@@ -9,7 +9,9 @@ C_SUITE = [r"ceo", r"coo", r"cmo", r"cto", r"cfo", r"chief\b.*", r"president"]
 HEAD = [r"head of .*", r"director of .*", r"vp\b.*", r"vice president.*"]
 ENTRY = ["intern", "junior", "trainee", "apprentice", "graduate"]
 
-GENERIC = ["hello", "info", "contact", "team", "office", "enquiries", "hi", "sales"]
+GENERIC = ["hello", "info", "contact", "team", "office", "enquiries", "enquiry", "inquiries", "inquiry", "hi", "hey", "sales",
+           "admin", "mail", "general", "studio", "agency", "marketing", "partnerships", "partners", "business", "bookings",
+           "talk", "connect", "projects", "growth"]
 NEVER = ["noreply", "no-reply", "privacy", "jobs", "careers", "hr", "support", "billing", "abuse"]
 
 
@@ -36,12 +38,24 @@ def seniority(title: str) -> str:
     return "other"
 
 
-def pick_person(people: list[dict], pf: dict) -> dict | None:
+def is_outsider(title: str, own: set[str]) -> bool:
+    """'CMO at Workbooks' on a team-less page is a client in a testimonial, not staff. A title that says 'at <org>'
+    counts as staff only when the org is the company itself."""
+    m = re.search(r"(?:\bat\b|@)\s+(.+)$", title or "", re.I)
+    if not m or not own:
+        return False
+    org = re.sub(r"[^a-z0-9]+", "", m.group(1).lower())
+    return not any(w and w in org for w in own)
+
+
+def pick_person(people: list[dict], pf: dict, own: set[str] | None = None) -> dict | None:
     """People are in page order. Returns the chosen person dict (with seniority) or None."""
     prio = pf["titlePriority"]
     best, best_rank = None, None
     for p in people:
         title = p.get("title") or ""
+        if is_outsider(title, own or set()):
+            continue
         sen = seniority(title)
         if any(has_word(title, x) for x in pf["excludeTitle"]) or sen in pf["excludeSeniority"]:
             continue
@@ -80,6 +94,19 @@ def match_email(person_name: str, emails: list[dict], allow_generic: bool) -> di
     return None
 
 
+def pick_contact(people: list[dict], emails: list[dict], f: dict, own: set[str] | None = None) -> tuple[dict | None, dict | None, str | None]:
+    """(person, email, why_not). With no fitting person, a generic address still makes a lead when the campaign allows it."""
+    chosen = pick_person(people, f["person"], own)
+    if chosen:
+        match = match_email(chosen["name"], emails, f["email"]["allowGeneric"])
+        return (chosen, match, None) if match else (None, None, "no usable email")
+    if f["email"].get("allowNoPerson", True) and f["email"]["allowGeneric"]:
+        match = match_email("", emails, True)
+        if match:
+            return {"id": None, "name": "", "title": "", "seniority": None}, match, None
+    return None, None, "no person"
+
+
 async def mx_ok(domain: str) -> bool:
     def _q():
         try:
@@ -103,19 +130,21 @@ async def run(run_id: str, campaign: dict, should_stop, ids: list[str] | None = 
         if should_stop():
             return
         people = db.table("people").select("*").eq("company_id", c["id"]).order("created_at").execute().data
-        chosen = pick_person(people, f["person"])
         emails = (c.get("facts") or {}).get("emails", [])
-        match = match_email(chosen["name"], emails, f["email"]["allowGeneric"]) if chosen else None
+        own = {re.sub(r"[^a-z0-9]+", "", x.lower()) for x in (c["domain"].split(".")[0], c.get("name") or "") if x}
+        chosen, match, why = pick_contact(people, emails, f, own)
         if match and f["email"]["requireMx"] and not await mx_ok(match["email"].split("@")[1]):
-            match = None
-        if not chosen or not match:
-            db.table("companies").update({"status": "no_contact",
-                "fail_reason": "no person" if not chosen else "no usable email"}).eq("id", c["id"]).execute()
-            log_event(run_id, "info", "contact", f"{c['domain']}: no_contact")
+            chosen, match, why = None, None, "no usable email"
+        if not match:
+            db.table("companies").update({"status": "no_contact", "fail_reason": why}).eq("id", c["id"]).execute()
+            log_event(run_id, "info", "contact", f"{c['domain']}: no_contact ({why})")
             continue
-        db.table("people").update({
-            "selected": True, "seniority": chosen["seniority"], "email": match["email"],
-            "email_kind": match["kind"], "email_source": match["url"], "mx_ok": True,
-        }).eq("id", chosen["id"]).execute()
+        db.table("people").update({"selected": False}).eq("company_id", c["id"]).execute()  # one contact per company
+        fields = {"selected": True, "seniority": chosen["seniority"], "email": match["email"],
+                  "email_kind": match["kind"], "email_source": match["url"], "mx_ok": True}
+        if chosen["id"]:
+            db.table("people").update(fields).eq("id", chosen["id"]).execute()
+        else:  # nobody named on the site: the lead is the generic address
+            db.table("people").insert({"company_id": c["id"], "name": "", "title": "", "source": "website", **fields}).execute()
         db.table("companies").update({"status": "contacted"}).eq("id", c["id"]).execute()
-        log_event(run_id, "info", "contact", f"{c['domain']}: {chosen['name']} ({match['kind']} email)")
+        log_event(run_id, "info", "contact", f"{c['domain']}: {chosen['name'] or 'no named person'} ({match['kind']} email)")

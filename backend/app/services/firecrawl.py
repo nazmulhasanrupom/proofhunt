@@ -6,7 +6,6 @@ import time
 import httpx
 
 from ..config import settings
-from ..db import get_db
 from . import usage
 
 BASE = "https://api.firecrawl.dev/v2"
@@ -105,15 +104,8 @@ async def search(query: str, limit: int = 20, run_id: str | None = None) -> dict
     return {"results": results, "credits": credits}
 
 
-async def scrape(url: str, formats: list[str], only_main_content: bool,
-                 company_id: str, kind: str = "other", run_id: str | None = None) -> dict:
-    """Returns {'markdown','links','raw_html','status'}. Raises ScrapeError on failure.
-    Cached: a URL already in `pages` costs no credit."""
-    db = get_db()
-    cached = db.table("pages").select("markdown,raw_html").eq("company_id", company_id).eq("url", url).execute().data
-    if cached:
-        return {"markdown": cached[0]["markdown"], "links": [], "raw_html": cached[0]["raw_html"],
-                "status": 200, "cached": True}
+async def fetch(url: str, formats: list[str], only_main_content: bool, run_id: str | None = None) -> dict:
+    """Read one page with Firecrawl (costs 1 credit). Returns {'markdown','links','raw_html','status'}. Raises ScrapeError on failure."""
     await asyncio.to_thread(usage.check_credit_budget, 1, run_id)
     try:
         data = await _post("/scrape", {"url": url, "formats": formats, "onlyMainContent": only_main_content}, run_id)
@@ -133,8 +125,4 @@ async def scrape(url: str, formats: list[str], only_main_content: bool,
            "raw_html": d.get("rawHtml"), "status": status, "cached": False}
     if status and status >= 400:
         raise ScrapeError(f"page returned HTTP {status}")
-    db.table("pages").upsert({
-        "company_id": company_id, "url": url, "kind": kind,
-        "markdown": out["markdown"], "raw_html": out["raw_html"] if kind == "home" else None,
-    }, on_conflict="company_id,url").execute()
     return out

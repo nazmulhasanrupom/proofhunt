@@ -1,12 +1,15 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useToast } from "../components/Toast";
 import Empty from "../components/Empty";
 import Skeleton from "../components/Skeleton";
 import Drawer, { KV, Tabs } from "../components/Drawer";
+import QualifyDialog from "../components/QualifyDialog";
 import { companyColor, dayTime } from "../lib/fmt";
+
+const HAND_STATUS = ["new", "audited", "extracted", "contacted", "filtered_out", "no_contact", "rejected", "maybe", "failed", "qualified"];
 
 type Row = {
   id: string; domain: string; name: string | null; country: string | null; size_estimate: number | null; size_bucket: string | null;
@@ -30,16 +33,12 @@ export default function CompaniesPage() {
   const open = params.get("id");
   const toast = useToast();
   const qc = useQueryClient();
-  const nav = useNavigate();
   const [picked, setPicked] = useState<Set<string>>(new Set());
-  const qualify = useMutation({
-    mutationFn: (ids: string[]) => api<{ runs: { run_id: string; count: number }[]; companies: number; estimated_credits: number }>("/companies/qualify", { body: { ids } }),
-    onSuccess: (r) => {
-      toast(`Qualifying ${r.companies} compan${r.companies === 1 ? "y" : "ies"}. Watch it in Activity`);
-      setPicked(new Set());
-      qc.invalidateQueries({ queryKey: ["companies"] }); qc.invalidateQueries({ queryKey: ["runs"] });
-      nav(`/activity?run=${r.runs[0].run_id}`);
-    },
+  const [dialog, setDialog] = useState<string[] | null>(null);
+  const [bulkStatus, setBulkStatus] = useState("");
+  const bulkSet = useMutation({
+    mutationFn: (v: { ids: string[]; status: string }) => api<{ updated: number }>("/companies/status", { body: v }),
+    onSuccess: (r, v) => { toast(`${r.updated} set to ${v.status}`); setPicked(new Set()); setBulkStatus(""); qc.invalidateQueries({ queryKey: ["companies"] }); },
     onError: (e: Error) => toast(e.message, true),
   });
   const pickAll = useMutation({
@@ -47,14 +46,6 @@ export default function CompaniesPage() {
     onSuccess: (ids) => { setPicked(new Set(ids)); toast(`${ids.length} selected`); },
     onError: (e: Error) => toast(e.message, true),
   });
-  const ask = (ids: string[], rows: Row[]) => {
-    const fresh = rows.filter((r) => ids.includes(r.id) && ["new", "failed", "auditing"].includes(r.status)).length;
-    const msg = `Qualify ${ids.length} compan${ids.length === 1 ? "y" : "ies"} now?\n\n` +
-      "It reads their site (only if not read before), finds the contact, scores the fit, and writes the emails. " +
-      (fresh ? `About ${fresh} of them may be new to Firecrawl: up to ${fresh * 4} credits. ` : "Saved pages are reused, so this should cost no Firecrawl credits. ") +
-      "It also uses AI calls.";
-    if (confirm(msg)) qualify.mutate(ids);
-  };
   const { data, isLoading } = useQuery({
     queryKey: ["companies", status, q, page],
     queryFn: () => api<Row[]>(`/companies?page=${page}&status=${encodeURIComponent(status)}&q=${encodeURIComponent(q)}`),
@@ -75,7 +66,12 @@ export default function CompaniesPage() {
         {picked.size > 0 && (
           <div className="mb-3 flex items-center gap-2 rounded-lg px-3 py-2" style={{ background: "var(--bg-3)" }}>
             <span>{picked.size} selected</span>
-            <button className="btn-primary" disabled={qualify.isPending} onClick={() => ask([...picked], data ?? [])}>{qualify.isPending ? "Starting…" : "Qualify selected"}</button>
+            <button className="btn-primary" onClick={() => setDialog([...picked])}>Qualify selected</button>
+            <select className="select" style={{ width: 170 }} value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)}>
+              <option value="">Set status…</option>
+              {HAND_STATUS.map((x) => <option key={x}>{x}</option>)}
+            </select>
+            {bulkStatus && <button className="btn" disabled={bulkSet.isPending} onClick={() => { if (confirm(`Set ${picked.size} compan${picked.size === 1 ? "y" : "ies"} to '${bulkStatus}'?`)) bulkSet.mutate({ ids: [...picked], status: bulkStatus }); }}>Apply</button>}
             <button className="btn" onClick={() => setPicked(new Set())}>Clear</button>
           </div>
         )}
@@ -96,7 +92,7 @@ export default function CompaniesPage() {
                     <td>{c.size_estimate ?? c.size_bucket ?? "—"}</td><td>{c.keyword_hits?.length ?? 0}</td><td>{c.score ?? "—"}</td>
                     <td><span className="dot" style={{ background: companyColor(c.status) }} />{c.status}{c.fail_reason ? <span style={{ color: "var(--text-faint)" }}> · {c.fail_reason}</span> : null}</td>
                     <td className="text-right" onClick={(e) => e.stopPropagation()}>
-                      <button className="btn" disabled={qualify.isPending} onClick={() => ask([c.id], data)}>Qualify</button>
+                      <button className="btn" onClick={() => setDialog([c.id])}>Qualify</button>
                     </td>
                   </tr>
                 ))}
@@ -113,6 +109,7 @@ export default function CompaniesPage() {
         )}
       </div>
       {open && <CompanyDrawer id={open} onClose={() => setParams({})} />}
+      {dialog && <QualifyDialog ids={dialog} onClose={() => setDialog(null)} onDone={() => setPicked(new Set())} />}
     </div>
   );
 }
@@ -122,11 +119,18 @@ export function CompanyDrawer({ id, onClose }: { id: string; onClose: () => void
   const qc = useQueryClient();
   const [tab, setTab] = useState("Facts");
   const { data: c, isLoading } = useQuery({ queryKey: ["company", id], queryFn: () => api<Detail>(`/companies/${id}`) });
-  const nav = useNavigate();
-  const qualify = useMutation({
-    mutationFn: () => api<{ runs: { run_id: string }[] }>("/companies/qualify", { body: { ids: [id] } }),
-    onSuccess: (r) => { toast("Qualifying. Watch it in Activity"); qc.invalidateQueries({ queryKey: ["runs"] }); nav(`/activity?run=${r.runs[0].run_id}`); },
-    onError: (e: Error) => toast(e.message, true),
+  const [dialog, setDialog] = useState(false);
+  const [st, setSt] = useState<string | null>(null);
+  const [size, setSize] = useState<string | null>(null);
+  const [country, setCountry] = useState<string | null>(null);
+  const refresh = () => { qc.invalidateQueries({ queryKey: ["company", id] }); qc.invalidateQueries({ queryKey: ["companies"] }); };
+  const saveStatus = useMutation({
+    mutationFn: (status: string) => api(`/companies/${id}/status`, { method: "PATCH", body: { status } }),
+    onSuccess: () => { toast("Status saved"); setSt(null); refresh(); }, onError: (e: Error) => toast(e.message, true),
+  });
+  const saveFacts = useMutation({
+    mutationFn: (b: { size_estimate?: number; country?: string }) => api(`/companies/${id}`, { method: "PATCH", body: b }),
+    onSuccess: () => { toast("Saved. Press Qualify to check the filters again"); setSize(null); setCountry(null); refresh(); }, onError: (e: Error) => toast(e.message, true),
   });
   const rejudge = useMutation({
     mutationFn: () => api<{ status: string }>(`/companies/${id}/rejudge`, { method: "POST" }),
@@ -140,9 +144,25 @@ export function CompanyDrawer({ id, onClose }: { id: string; onClose: () => void
         {isLoading && <Skeleton rows={5} />}
         {c && tab === "Facts" && (
           <>
-            <button className="btn-primary mb-3" disabled={qualify.isPending} onClick={() => { if (confirm(`Qualify ${c.domain} now?`)) qualify.mutate(); }}>{qualify.isPending ? "Starting…" : "Qualify this company"}</button>
-            <KV k="Status" v={<><span className="dot" style={{ background: companyColor(c.status) }} />{c.status}{c.fail_reason ? ` — ${c.fail_reason}` : ""}</>} />
-            <KV k="Country" v={c.country} /><KV k="Size" v={c.size_estimate ?? c.size_bucket} />
+            <button className="btn-primary mb-3" onClick={() => setDialog(true)}>Qualify this company</button>
+            <div className="mb-3 flex items-center gap-2">
+              <span className="label mb-0 w-28">Status</span>
+              <select className="select" value={st ?? c.status} onChange={(e) => setSt(e.target.value)}>
+                {[...new Set([c.status, ...HAND_STATUS])].map((x) => <option key={x}>{x}</option>)}
+              </select>
+              {st && st !== c.status && <button className="btn" disabled={saveStatus.isPending} onClick={() => saveStatus.mutate(st)}>Save</button>}
+            </div>
+            {c.fail_reason && <div className="mb-2" style={{ color: "var(--text-faint)", fontSize: 12 }}>{c.fail_reason}</div>}
+            <div className="mb-2 flex items-center gap-2">
+              <span className="label mb-0 w-28">Country</span>
+              <input className="input" value={country ?? c.country ?? ""} onChange={(e) => setCountry(e.target.value)} />
+              {country != null && <button className="btn" onClick={() => saveFacts.mutate({ country })}>Save</button>}
+            </div>
+            <div className="mb-3 flex items-center gap-2">
+              <span className="label mb-0 w-28">Size (people)</span>
+              <input className="input" type="number" min={0} value={size ?? c.size_estimate ?? ""} onChange={(e) => setSize(e.target.value)} />
+              {size != null && size !== "" && <button className="btn" onClick={() => saveFacts.mutate({ size_estimate: Number(size) })}>Save</button>}
+            </div>
             <KV k="Last audit" v={dayTime(c.last_audited_at)} />
             {Object.entries(c.facts ?? {}).map(([k, v]) => <KV key={k} k={k.replace(/_/g, " ")} v={typeof v === "string" ? v : JSON.stringify(v)} />)}
             <div className="label mt-3">Tech found</div>
@@ -200,6 +220,7 @@ export function CompanyDrawer({ id, onClose }: { id: string; onClose: () => void
           </table>
         )}
       </div>
+      {dialog && <QualifyDialog ids={[id]} onClose={() => setDialog(false)} />}
     </Drawer>
   );
 }

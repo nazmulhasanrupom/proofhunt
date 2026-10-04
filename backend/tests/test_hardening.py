@@ -159,3 +159,156 @@ def test_firecrawl_backoff_and_pacing(monkeypatch):
     before = fc._interval
     fc._speed_up()
     assert 0.1 <= fc._interval < before                     # and shrinks again after a success
+
+
+# ---- Crawl4AI reader, text for the AI, contacts, filters ----
+
+def _crawl_item(**kw):
+    base = {"success": True, "status_code": 200, "redirected_status_code": 200, "html": "<html>x</html>",
+            "links": {"internal": [{"href": "https://a.com/about"}, {"href": "https://a.com/x["}, {"href": "https://a.com/y#top"}]},
+            "markdown": {"raw_markdown": "raw " * 60, "fit_markdown": "fit " * 60}}
+    return {**base, **kw}
+
+
+def test_crawl4ai_parse():
+    from app.services import crawl4ai as c4
+    out = c4.parse_crawl(_crawl_item(), main_only=True)
+    assert out["markdown"].startswith("fit") and out["links"] == ["https://a.com/about"] and out["raw_html"]
+    assert c4.parse_crawl(_crawl_item(), main_only=False)["markdown"].startswith("raw")
+    with pytest.raises(c4.PageGone):                       # the site says 404: do not pay another reader for the same answer
+        c4.parse_crawl(_crawl_item(redirected_status_code=404, status_code=301), True)
+    with pytest.raises(c4.Crawl4aiError) as e:             # 403 / empty page: Firecrawl may do better
+        c4.parse_crawl(_crawl_item(status_code=403, redirected_status_code=403), True)
+    assert not isinstance(e.value, c4.PageGone)
+    with pytest.raises(c4.Crawl4aiError):
+        c4.parse_crawl(_crawl_item(markdown={"raw_markdown": "tiny", "fit_markdown": ""}), False)
+    md_only = _crawl_item(links={}, markdown={"raw_markdown": "see [about](https://a.com/about) and [home](/) " + "x" * 120, "fit_markdown": ""})
+    assert c4.parse_crawl(md_only, False)["links"] == ["https://a.com/about", "/"]
+
+
+def test_scraper_falls_back_to_firecrawl(monkeypatch):
+    import asyncio
+    from app.services import scraper, crawl4ai as c4, firecrawl as fc
+
+    class Saved:
+        def __init__(self): self.rows = []
+        def table(self, _): return self
+        def select(self, *_): return self
+        def eq(self, *_): return self
+        def upsert(self, row, **_): self.rows.append(row); return self
+        def execute(self):
+            class R: data = []
+            return R()
+    db = Saved()
+    monkeypatch.setattr(scraper, "get_db", lambda: db)
+    monkeypatch.setattr(scraper, "log_event", lambda *a, **k: None)
+    monkeypatch.setattr(c4, "enabled", lambda: True)
+    calls = []
+
+    async def fc_fetch(url, formats, main, run_id=None):
+        calls.append("firecrawl")
+        return {"markdown": "from firecrawl " * 20, "links": [], "raw_html": None, "status": 200, "cached": False}
+    monkeypatch.setattr(fc, "fetch", fc_fetch)
+
+    async def c4_ok(url, main):
+        calls.append("crawl4ai")
+        return {"markdown": "from crawl4ai " * 20, "links": [], "raw_html": "<h>", "status": 200, "cached": False}
+    monkeypatch.setattr(c4, "fetch", c4_ok)
+    r = asyncio.run(scraper.scrape("https://a.com", [], False, "cid", "home"))
+    assert calls == ["crawl4ai"] and r["source"] == "crawl4ai" and db.rows[-1]["raw_html"] == "<h>"
+
+    async def c4_fail(url, main):
+        raise c4.Crawl4aiError("timeout")
+    monkeypatch.setattr(c4, "fetch", c4_fail)
+    calls.clear()
+    r = asyncio.run(scraper.scrape("https://a.com", [], False, "cid", "about"))
+    assert calls == ["firecrawl"] and r["source"] == "firecrawl"
+
+    async def c4_gone(url, main):
+        raise c4.PageGone("page returned HTTP 404")
+    monkeypatch.setattr(c4, "fetch", c4_gone)
+    calls.clear()
+    with pytest.raises(fc.ScrapeError):
+        asyncio.run(scraper.scrape("https://a.com/nope", [], False, "cid", "about"))
+    assert calls == []                                      # no credit spent on a real 404
+
+
+def test_team_section_is_not_cut_off():
+    from app.pipeline.extract import build_llm_input
+    filler = "\n".join(f"Service line number {i} about our work and pricing" for i in range(3000))   # a very long page
+    about = filler + "\n\n## Our team\n\nJane Doe\n\nFounder & CEO\n"
+    out = build_llm_input([{"url": "https://a.com", "kind": "home", "markdown": filler},
+                           {"url": "https://a.com/about", "kind": "about", "markdown": about}])
+    assert "Jane Doe" in out and "Founder & CEO" in out     # old code kept only the first 12000 characters of each page
+    assert len(out) < 50000
+
+
+def test_compaction_keeps_lines_word_for_word():
+    from app.pipeline.extract import compact
+    md = "Menu\n\n![logo](x.png)\n\nMenu\n[Jane Doe](/jane) CEO\n\n\nMenu"
+    assert compact(md) == "Menu\n[Jane Doe](/jane) CEO"
+
+
+def test_person_with_image_between_name_and_title():
+    from app.pipeline.extract import verify_items
+    page = "Ronak Meghani\n\n![photo](https://x/r.jpg)\n\nCEO & Co-Founder\n\nMitul Patel\n\nDirector"
+    pages = [{"url": "https://a.com/about", "markdown": page}]
+    ok, bad = verify_items([{"url": "https://a.com/about", "name": "Ronak Meghani", "title": "CEO & Co-Founder",
+                             "quote": "Ronak Meghani\n\nCEO & Co-Founder"}], pages)
+    assert len(ok) == 1 and not bad
+    ok, bad = verify_items([{"url": "https://a.com/about", "name": "Ronak Meghani", "title": "Chief Wizard",
+                             "quote": "Ronak Meghani Chief Wizard"}], pages)
+    assert not ok and len(bad) == 1                         # a made-up title still fails
+
+
+def test_contact_fallback_to_generic_address():
+    from app.pipeline.contacts import pick_contact
+    from app.schemas import CampaignFilters
+    f = CampaignFilters().model_dump()
+    emails = [{"email": "admin@acme.com", "url": "https://acme.com/contact"}]
+    person, match, why = pick_contact([], emails, f)             # nobody named on the site
+    assert why is None and person["name"] == "" and match["kind"] == "generic" and person["id"] is None
+    f["email"]["allowNoPerson"] = False
+    assert pick_contact([], emails, f) == (None, None, "no person")
+    f["email"]["allowNoPerson"] = True
+    boss = [{"id": "1", "name": "Sam Lee", "title": "Founder"}]
+    person, match, why = pick_contact(boss, emails, f)
+    assert person["name"] == "Sam Lee" and match["email"] == "admin@acme.com"
+    assert pick_contact(boss, [], f) == (None, None, "no usable email")
+
+
+def test_filter_reason_names_the_ranges():
+    from app.pipeline.filters import apply_filters
+    from app.schemas import CampaignFilters
+    f = CampaignFilters().model_dump()
+    why = apply_filters({"country": "United States", "size_estimate": 250, "keyword_hits": ["seo agency"]}, f)
+    assert "250" in why and "1-10, 11-50" in why
+
+
+def test_resume_point_reuses_saved_work():
+    from app.routers.companies import resume_point
+    from app.schemas import CampaignFilters
+    f = CampaignFilters().model_dump()
+    facts = {"sells": "seo"}
+    big = {"status": "filtered_out", "facts": facts, "country": "United States", "size_estimate": 250, "keyword_hits": ["x"], "fail_reason": "old"}
+    assert resume_point(big, True, False, f)[0] == "filtered_out"          # still too big for this campaign: no AI call
+    f["company"]["employeeRanges"] = [[1, 1000]]
+    assert resume_point(big, True, False, f) == ("extracted", None)         # widened the range: goes on, free
+    assert resume_point({"status": "no_contact", "facts": facts}, True, False, f)[0] == "audited"
+    assert resume_point({"status": "no_contact", "facts": facts}, False, False, f)[0] == "new"
+    assert resume_point({"status": "rejected", "facts": facts}, True, True, f)[0] == "contacted"
+    assert resume_point({"status": "qualified"}, True, True, f)[0] == "qualified"
+
+
+def test_client_in_a_testimonial_is_not_a_contact():
+    from app.pipeline.contacts import pick_contact
+    from app.schemas import CampaignFilters
+    f = CampaignFilters().model_dump()
+    emails = [{"email": "info@hallam.agency", "url": "https://hallam.agency/contact"}]
+    people = [{"id": "1", "name": "Dan Roche", "title": "CMO at Workbooks"},
+              {"id": "2", "name": "Jules Strong", "title": "VP Marketing EMEA at Lattice"}]
+    person, match, why = pick_contact(people, emails, f, {"hallam"})
+    assert person["name"] == "" and match["kind"] == "generic"          # no staff named: the generic address, not a client
+    staff = [{"id": "3", "name": "Sam Hall", "title": "Founder at Hallam"}] + people
+    assert pick_contact(staff, emails, f, {"hallam"})[0]["name"] == "Sam Hall"
+    assert pick_contact([{"id": "4", "name": "Ann", "title": "CEO"}], emails, f, {"hallam"})[0]["name"] == "Ann"

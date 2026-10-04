@@ -27,6 +27,7 @@ class QualifyFilters(BaseModel):
 
 class EmailFilters(BaseModel):
     allowGeneric: bool = True
+    allowNoPerson: bool = True   # no named person on the site: email the generic address instead of dropping the company
     requireMx: bool = True
 
 

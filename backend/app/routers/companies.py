@@ -3,7 +3,9 @@ from pydantic import BaseModel
 
 from ..db import get_db
 from ..pipeline import judge as judge_mod
+from ..pipeline.filters import apply_filters, size_bucket
 from ..pipeline.scope import chunks
+from ..schemas import CampaignFilters
 from ..services.usage import log_event
 
 router = APIRouter()
@@ -43,9 +45,23 @@ class QualifyIn(BaseModel):
     campaign_id: str | None = None
 
 
-# A company in one of these states starts again. Audited pages are reused, so only a never-audited company costs credits.
-RESTART = {"new", "auditing", "failed", "filtered_out", "no_contact", "rejected", "maybe", "judged"}
-CREDITS_PER_AUDIT = 4  # home page + up to 3 more pages
+CREDITS_PER_AUDIT = 4  # home page + up to 3 more pages (Crawl4AI pages cost nothing; Firecrawl pages cost 1 each)
+KEEP = {"qualified", "audited", "extracted", "contacted"}  # already on their way: continue from there
+
+
+def resume_point(c: dict, has_pages: bool, has_person: bool, filters: dict) -> tuple[str, str | None]:
+    """Where a company starts again. Work that is already saved is reused: pages cost nothing, and a company
+    that was only filtered out is checked against the campaign's filters again, with no AI call."""
+    st = c["status"]
+    extracted = bool(c.get("facts"))
+    if st in KEEP:
+        return st, c.get("fail_reason")
+    if st == "filtered_out" and extracted:
+        reason = apply_filters(c, filters)
+        return ("extracted", None) if reason is None else ("filtered_out", reason)
+    if st in ("rejected", "maybe", "judged") and has_person:
+        return "contacted", None             # only the judge runs again
+    return ("audited" if has_pages else "new"), None   # no_contact, failed and the rest: read the saved pages again
 
 
 @router.post("/companies/qualify")
@@ -58,29 +74,36 @@ async def qualify(body: QualifyIn, request: Request):
         raise HTTPException(422, "Pick at least one company")
     comps = []
     for part in chunks(ids):
-        comps += db.table("companies").select("id,domain,status,run_id").in_("id", part).execute().data
+        comps += db.table("companies").select("id,domain,status,run_id,fail_reason,facts,country,size_estimate,keyword_hits").in_("id", part).execute().data
     if not comps:
         raise HTTPException(404, "Companies not found")
     with_pages: set[str] = set()
+    with_person: set[str] = set()
     for part in chunks([c["id"] for c in comps]):
         with_pages |= {p["company_id"] for p in db.table("pages").select("company_id").in_("company_id", part).execute().data}
+        with_person |= {p["company_id"] for p in db.table("people").select("company_id").in_("company_id", part).eq("selected", True).execute().data}
 
     # which campaign decides the filters: the one given, else the one that found the company, else the newest
     runs = {r["id"]: r["campaign_id"] for r in db.table("runs").select("id,campaign_id").execute().data}
-    newest = (db.table("campaigns").select("id").order("created_at", desc=True).limit(1).execute().data or [{}])[0].get("id")
-    valid = {c["id"] for c in db.table("campaigns").select("id").execute().data}
-    if body.campaign_id and body.campaign_id not in valid:
+    camps = {c["id"]: c for c in db.table("campaigns").select("id,name,filters,created_at").order("created_at", desc=True).execute().data}
+    newest = next(iter(camps), None)
+    if body.campaign_id and body.campaign_id not in camps:
         raise HTTPException(404, "Campaign not found")
     groups: dict[str, list[str]] = {}
     credits = 0
+    still_filtered = []
     for c in comps:
-        camp = body.campaign_id or runs.get(c["run_id"]) or newest
+        camp = body.campaign_id or (runs.get(c["run_id"]) if runs.get(c["run_id"]) in camps else None) or newest
         if not camp:
             raise HTTPException(409, "Create a campaign first. Its filters decide who qualifies.")
-        if c["status"] in RESTART:
-            start = "audited" if c["id"] in with_pages else "new"
-            db.table("companies").update({"status": start, "fail_reason": None}).eq("id", c["id"]).execute()
-            credits += CREDITS_PER_AUDIT if start == "new" else 0
+        filters = CampaignFilters.model_validate(camps[camp]["filters"]).model_dump()
+        start, reason = resume_point(c, c["id"] in with_pages, c["id"] in with_person, filters)
+        if start != c["status"] or reason != c.get("fail_reason"):
+            db.table("companies").update({"status": start, "fail_reason": reason}).eq("id", c["id"]).execute()
+        if start == "filtered_out":
+            still_filtered.append({"domain": c["domain"], "reason": reason, "campaign": camps[camp]["name"]})
+            continue
+        credits += CREDITS_PER_AUDIT if start == "new" else 0
         groups.setdefault(camp, []).append(c["id"])
 
     started = []
@@ -88,10 +111,77 @@ async def qualify(body: QualifyIn, request: Request):
         run = db.table("runs").insert({"campaign_id": camp, "status": "queued",
                                        "counters": {"company_ids": gids, "manual": True}}).execute().data[0]
         await request.app.state.arq.enqueue_job("run_campaign_task", run["id"])
-        log_event(run["id"], "info", "qualify", f"manual qualify queued for {len(gids)} compan{'y' if len(gids) == 1 else 'ies'}: "
-                  + ", ".join(c["domain"] for c in comps if c["id"] in gids)[:300])
-        started.append({"run_id": run["id"], "count": len(gids)})
-    return {"runs": started, "companies": len(comps), "estimated_credits": credits}
+        log_event(run["id"], "info", "qualify", f"manual qualify queued for {len(gids)} compan{'y' if len(gids) == 1 else 'ies'} "
+                  f"(filters of campaign '{camps[camp]['name']}'): " + ", ".join(c["domain"] for c in comps if c["id"] in gids)[:300])
+        started.append({"run_id": run["id"], "count": len(gids), "campaign": camps[camp]["name"]})
+    for f_ in still_filtered:
+        log_event(None, "info", "qualify", f"{f_['domain']}: still filtered out by campaign '{f_['campaign']}': {f_['reason']}")
+    return {"runs": started, "companies": len(comps), "estimated_credits": credits, "still_filtered": still_filtered}
+
+
+# ---- change a company by hand -------------------------------------------------
+HAND_STATUS = {"new", "audited", "extracted", "contacted", "filtered_out", "no_contact", "rejected", "maybe", "failed", "qualified"}
+WITH_REASON = {"filtered_out", "no_contact", "rejected", "failed"}
+
+
+class StatusIn(BaseModel):
+    status: str
+    reason: str | None = None
+
+
+class BulkStatusIn(StatusIn):
+    ids: list[str]
+
+
+class CompanyEdit(BaseModel):
+    name: str | None = None
+    country: str | None = None
+    size_estimate: int | None = None
+
+
+def _set_status(ids: list[str], status: str, reason: str | None) -> int:
+    if status not in HAND_STATUS:
+        raise HTTPException(422, f"Status must be one of: {', '.join(sorted(HAND_STATUS))}")
+    db = get_db()
+    if status == "qualified":  # a qualified company needs a lead. Only a company that already has one can go back
+        have = set()
+        for part in chunks(ids):
+            have |= {l["company_id"] for l in db.table("leads").select("company_id").in_("company_id", part).execute().data}
+        if set(ids) - have:
+            raise HTTPException(409, "Qualified needs a lead (a judgment and a contact). Use Qualify to run the steps, "
+                                     "or set the status to 'contacted' and then press Qualify.")
+    fail = (reason or "set by hand") if status in WITH_REASON else None
+    for part in chunks(ids):
+        db.table("companies").update({"status": status, "fail_reason": fail}).in_("id", part).execute()
+    log_event(None, "info", "company", f"{len(ids)} compan{'y' if len(ids) == 1 else 'ies'} set to '{status}' by hand")
+    return len(ids)
+
+
+@router.post("/companies/status")
+def bulk_status(body: BulkStatusIn):
+    if not body.ids:
+        raise HTTPException(422, "Pick at least one company")
+    return {"updated": _set_status(list(dict.fromkeys(body.ids))[:2000], body.status, body.reason)}
+
+
+@router.patch("/companies/{cid}/status")
+def set_status(cid: str, body: StatusIn):
+    return {"updated": _set_status([cid], body.status, body.reason)}
+
+
+@router.patch("/companies/{cid}")
+def edit_company(cid: str, body: CompanyEdit):
+    """Fix a wrong number or country by hand (for example a size the AI guessed wrong)."""
+    data = body.model_dump(exclude_none=True)
+    if "size_estimate" in data:
+        if data["size_estimate"] < 0:
+            raise HTTPException(422, "Size cannot be negative")
+        data["size_bucket"] = size_bucket(data["size_estimate"] or None)
+        data["size_estimate"] = data["size_estimate"] or None
+    if data:
+        get_db().table("companies").update(data).eq("id", cid).execute()
+        log_event(None, "info", "company", f"{cid[:8]}: edited by hand ({', '.join(data)})")
+    return {"ok": True}
 
 
 @router.get("/companies/{cid}")

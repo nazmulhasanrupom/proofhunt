@@ -5,7 +5,7 @@ import tldextract
 
 from ..services import llm
 from .fingerprints import detect_tech, tech_in_text
-from .verify import quote_in_text
+from .verify import person_in_text, quote_in_text
 
 EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 OBFUSCATED_RE = re.compile(r"([a-zA-Z0-9._%+\-]+)\s*[\[\(]\s*at\s*[\]\)]\s*([a-zA-Z0-9\-\.]+?)\s*[\[\(]\s*dot\s*[\]\)]\s*([a-zA-Z]{2,})", re.I)
@@ -30,12 +30,10 @@ def find_emails(text: str, domain: str) -> list[str]:
     found = set(m.lower() for m in EMAIL_RE.findall(text))
     for u, d, tld in OBFUSCATED_RE.findall(text):
         found.add(f"{u}@{d}.{tld}".lower())
-    root = tldextract.extract(domain)
-    own = f"{root.domain}.{root.suffix}"
-    def _root(d):
-        x = tldextract.extract(d)
-        return f"{x.domain}.{x.suffix}"
-    return sorted(e for e in found if _root(e.split("@")[1]) == own)
+    # the company's own address. The same brand on another ending counts too (hallam.agency / hallam.co.uk),
+    # a picture name like logo@2x.png or a gmail address does not
+    own = tldextract.extract(domain).domain
+    return sorted(e for e in found if tldextract.extract(e.split("@")[1]).domain == own)
 
 
 def find_country(text: str, domain: str) -> tuple[str | None, str | None]:
@@ -133,10 +131,69 @@ def code_checks(domain: str, pages: list[dict], signals: list[dict], keywords: l
     }
 
 
-def build_llm_input(pages: list[dict], max_chars: int = 24000) -> str:
-    """About 6000 tokens total. Long pages are cut."""
-    per = max_chars // max(len(pages), 1)
-    return "\n\n".join(f"### PAGE: {p['url']}\n{(p['markdown'] or '')[:per]}" for p in pages)
+TEAM_LINE = re.compile(r"founder|owner|\bceo\b|\bcoo\b|\bcmo\b|managing director|director|head of|president|principal|partner|"
+                       r"our team|meet the|meet our|leadership|employees|team members|staff|people", re.I)
+KIND_WEIGHT = {"about": 3.0, "home": 2.0, "contact": 1.5, "careers": 1.5, "services": 1.0}
+IMAGE_ONLY = re.compile(r"^\s*(!\[[^\]]*\]\([^)]*\)\s*)+$")
+
+
+def compact(md: str) -> str:
+    """Drop whole noise lines only (blank, image-only, repeated menu lines). Kept lines stay word for word,
+    so a quote the model copies from here is still found in the saved page."""
+    seen, out = set(), []
+    for line in (md or "").splitlines():
+        s = line.strip()
+        if not s or IMAGE_ONLY.match(s):
+            continue
+        if len(s) < 120:
+            if s in seen:
+                continue
+            seen.add(s)
+        out.append(line.rstrip())
+    return "\n".join(out)
+
+
+def pick_text(text: str, budget: int) -> str:
+    """Keep the start of the page, then the parts around names and job titles, until the budget is used."""
+    if len(text) <= budget:
+        return text
+    lines = text.splitlines()
+    head, used = [], 0
+    for ln in lines:
+        if used + len(ln) + 1 > budget * 0.4:
+            break
+        head.append(ln)
+        used += len(ln) + 1
+    keep = set(range(len(head)))
+    for i, ln in enumerate(lines[len(head):], start=len(head)):
+        if TEAM_LINE.search(ln):
+            keep.update(range(max(len(head), i - 4), min(len(lines), i + 5)))
+    out, size, last = [], 0, -2
+    for i in sorted(keep):
+        ln = lines[i]
+        if size + len(ln) + 1 > budget:
+            break
+        if i != last + 1 and out:
+            out.append("...")
+        out.append(ln)
+        size += len(ln) + 1
+        last = i
+    return "\n".join(out)
+
+
+def build_llm_input(pages: list[dict], max_chars: int = 48000) -> str:
+    """Give each page a share of the budget (the About page the biggest). A long page is cut to its start
+    plus the parts about people, so the team section is not lost."""
+    texts = [(p, compact(p["markdown"] or "")) for p in pages]
+    todo = {i: KIND_WEIGHT.get(p.get("kind") or "", 1.0) for i, (p, _) in enumerate(texts)}
+    share: dict[int, int] = {}
+    remaining = max_chars
+    for i in sorted(todo, key=lambda k: len(texts[k][1])):   # short pages first, they give back what they do not need
+        w = todo[i] / sum(todo[j] for j in todo if j not in share)
+        give = min(len(texts[i][1]), int(remaining * w))
+        share[i] = give
+        remaining -= give
+    return "\n\n".join(f"### PAGE: {p['url']}\n{pick_text(t, share[i])}" for i, (p, t) in enumerate(texts))
 
 
 from pydantic import BaseModel  # noqa: E402
@@ -188,10 +245,10 @@ def verify_items(items: list[dict], pages: list[dict]) -> tuple[list[dict], list
     ok, bad = [], []
     for it in items:
         text = by_url.get(it.get("url"))
-        if text is None:  # url not exact: try all pages
-            hit = any(quote_in_text(it.get("quote", ""), t) for t in by_url.values())
-        else:
-            hit = quote_in_text(it.get("quote", ""), text)
+        texts = list(by_url.values()) if text is None else [text]   # url not exact: try all pages
+        hit = any(quote_in_text(it.get("quote", ""), t) for t in texts)
+        if not hit and it.get("name") and it.get("title"):
+            hit = any(person_in_text(it["name"], it["title"], t) for t in texts)
         (ok if hit else bad).append(it)
     return ok, bad
 
@@ -269,5 +326,6 @@ async def run(run_id: str, campaign: dict, should_stop, ids: list[str] | None = 
         if reason:
             upd.update({"status": "filtered_out", "fail_reason": reason})
         db.table("companies").update(upd).eq("id", c["id"]).execute()
-        log_event(run_id, "info", "extract", f"{c['domain']}: {upd['status']}",
+        why = f" ({reason}; campaign '{campaign.get('name')}')" if reason else ""
+        log_event(run_id, "info", "extract", f"{c['domain']}: {upd['status']}{why}",
                   {"evidence": len(ev), "people": len(people), "country": country, "size": size})

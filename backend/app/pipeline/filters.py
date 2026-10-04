@@ -17,9 +17,10 @@ def apply_filters(company: dict, f: dict) -> str | None:
     size = company.get("size_estimate")
     if size:
         if not any(lo <= size <= hi for lo, hi in c["employeeRanges"]):
-            return f"size {size} outside ranges"
+            ranges = ", ".join(f"{lo}-{hi}" for lo, hi in c["employeeRanges"])
+            return f"size {size} is outside the allowed ranges ({ranges})"
     elif not c["allowUnknownSize"]:
-        return "size unknown"
+        return "size unknown (this campaign does not allow unknown size)"
     hits = len(company.get("keyword_hits") or [])
     if hits < c["minKeywordHits"]:
         return f"keyword hits {hits} < {c['minKeywordHits']}"

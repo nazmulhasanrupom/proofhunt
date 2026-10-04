@@ -51,7 +51,8 @@ export default function ActivityPage() {
   const qualifyRest = async () => {
     if (!confirm(`Stop searching and qualify the ${waiting.length} companies this run already found?\n\nIt reads their sites (about 4 Firecrawl credits each if never read), finds contacts, scores the fit and writes emails. This run will be cancelled.`)) return;
     try {
-      const out = await api<{ runs: { run_id: string }[] }>("/companies/qualify", { body: { ids: waiting.map((c) => c.id) } });
+      const out = await api<{ runs: { run_id: string }[]; still_filtered: { domain: string; reason: string }[] }>("/companies/qualify", { body: { ids: waiting.map((c) => c.id) } });
+      if (!out.runs.length) { toast(`Nothing started. ${out.still_filtered[0]?.domain ?? "They"} still filtered out: ${out.still_filtered[0]?.reason ?? ""}`, true); return; }
       if (r && ["paused", "failed"].includes(r.status)) await api(`/runs/${runId}/cancel`, { method: "POST" }).catch(() => null);
       toast("Qualifying the companies found so far");
       qc.invalidateQueries({ queryKey: ["runs"] });

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from urllib.parse import urljoin, urlparse
 
 from ..db import get_db
-from ..services import firecrawl
+from ..services import firecrawl, scraper
 from ..services.usage import BudgetExceeded, log_event
 from .scope import todo as scope_todo
 
@@ -41,7 +41,7 @@ async def audit_company(company: dict, run_id: str) -> bool:
     db.table("companies").update({"status": "auditing"}).eq("id", cid).execute()
     home_url = f"https://{domain}"
     try:
-        home = await firecrawl.scrape(home_url, ["markdown", "links", "rawHtml"], False, cid, "home", run_id)
+        home = await scraper.scrape(home_url, ["markdown", "links", "rawHtml"], False, cid, "home", run_id)
     except firecrawl.RateLimited:
         raise
     except firecrawl.ScrapeError as e:
@@ -58,7 +58,7 @@ async def audit_company(company: dict, run_id: str) -> bool:
     picked = pick_pages(home_url, links)
     for kind, url in picked:
         try:
-            await firecrawl.scrape(url, ["markdown"], kind != "contact", cid, kind, run_id)
+            await scraper.scrape(url, ["markdown"], kind != "contact", cid, kind, run_id)
         except firecrawl.RateLimited:
             raise  # do not mark the company audited with pages missing. Saved pages are reused next time
         except firecrawl.ScrapeError as e:  # a missing sub page is fine, keep going

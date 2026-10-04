@@ -21,10 +21,10 @@ Your CV ─► Offer map ─► Campaign ─► Discovery ─► Audit ─► Fi
 1. **CV → offer map.** Upload a CV (PDF, DOCX, TXT). The AI turns it into an *offer map*: the services you sell, the problems they solve, and **signals** to look for on a prospect's site (a phrase, a missing tool, a tool in use, a hiring ad, or an AI check). You can edit all of it.
 2. **Campaign.** Pick countries, company size, job titles and keywords. The form shows the Firecrawl credit cost before you start.
 3. **Discovery.** Firecrawl search finds agency websites. Directory and list sites are dropped. Each domain is cleaned and de-duplicated.
-4. **Audit.** Proofhunt reads up to 4 pages per company (home, about, contact, careers/services). Pages are saved and never fetched twice.
+4. **Audit.** Proofhunt reads up to 4 pages per company (home, about, contact, careers/services). Crawl4AI reads them first, Firecrawl is the fallback. Pages are saved and never fetched twice.
 5. **Extract and verify.** Code checks and the AI pull out facts. **Every quote is checked against the saved page text.** A quote that is not on the page is thrown away.
 6. **Filters.** Companies that do not match your campaign are dropped, with the proof (for example "250 full-time specialists").
-7. **Contact pick.** Proofhunt picks the right person from the site. It uses **only emails published on the company's own website**. It never guesses an address. If a site lists nobody, the company is marked `no_contact`.
+7. **Contact pick.** Proofhunt picks the right person from the site (staff only, never a client quoted in a testimonial). It uses **only emails published on the company's own website**. It never guesses an address. If the site names nobody but publishes a generic address (info@, hello@), the lead is that address (switch off in the campaign: *Keep companies that name nobody*). With no usable email the company is marked `no_contact`.
 8. **Judge.** The AI scores the fit from 0 to 100. Hard rules cap the score if it cannot cite valid evidence.
 9. **Assets.** Every qualified lead gets a short audit report with a private link. The best leads also get a demo project spec.
 10. **Email sequence.** One main email and 3 follow-ups per lead. Code checks reject drafts that are too long, have more than one link, use spam phrases or leave placeholders.
@@ -81,7 +81,8 @@ The private storage bucket `cvs` is created for you on first start.
 |---|---|
 | `SUPABASE_URL`, `SUPABASE_KEY` | From step 2 |
 | `DEEPSEEK_API_KEY` | From your DeepSeek account |
-| `FIRECRAWL_API_KEY` | From your Firecrawl account |
+| `FIRECRAWL_API_KEY` | From your Firecrawl account. Used for **search**, and for reading a page when Crawl4AI fails |
+| `CRAWL4AI_URL`, `CRAWL4AI_TOKEN` | Optional. Your own [Crawl4AI](https://github.com/unclecode/crawl4ai) server (Docker API with a token). When set, pages are read with Crawl4AI first, which costs no Firecrawl credits. If it fails (timeout, blocked, empty page), Firecrawl reads that page. A real 404 is not retried |
 | `FIRECRAWL_MIN_INTERVAL`, `FIRECRAWL_CONCURRENCY`, `FIRECRAWL_MAX_RETRIES` | Wait time between Firecrawl requests (default 2 seconds), requests at once (2), and retries after a 429 "too many requests" (6, with growing waits). Free plans are strict: use `6` and `1`. Paid plans can use `0.5` and `5` |
 | `APP_SECRET_KEY` | A key that encrypts your Gmail login. Make one: `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | From step 4 (can wait until you want to send) |
@@ -171,8 +172,8 @@ The same thing works on any host:
 | Dashboard | Qualified leads, sent this week, reply rate, credits left, funnel, top signals, hot replies |
 | Activity / Runs | Pick any run. See its companies, per-stage usage and live log. Pause, resume, cancel. **Continue** picks up companies a stage limit left behind. **Qualify the N found** stops searching and qualifies what a paused run already found |
 | Profile & CV / Offer map | Upload a CV. Edit services, problems, proof and signals |
-| Campaigns | Filters and the credit estimate |
-| Companies | Every company with facts, quotes, people and the judgment. **Qualify** one company, or tick several (or select all) and press **Qualify selected**. It starts a manual run you can watch in Activity |
+| Campaigns | Filters and the credit estimate. Click a campaign (or **Edit**) to change it |
+| Companies | Every company with facts, quotes, people and the judgment. **Qualify** one company, or tick several (or select all) and press **Qualify selected**. You choose whose filters decide. It starts a manual run you can watch in Activity. Saved pages and saved AI work are reused. A company that was only filtered out is checked against the filters again for free, so widening a campaign's size range and pressing Qualify is enough. You can also **set the status by hand** (one or many) and fix a wrong size or country in the drawer |
 | Leads | Board (drag to change stage) or table. Emails, report, demo, notes |
 | Review queue | Approve, edit, regenerate or skip drafts |
 | Outbox / Replies | Scheduled and sent emails. **Edit**, **Unapprove** (back to draft, or back to the Review queue if nothing was sent) or **Delete** any email that is not sent yet. Replies with a label (interested, not now, …) |
@@ -196,6 +197,20 @@ A run goes through stages: discovery → audit → extract → contacts → judg
 - Companies a limit left behind stay in their status. Press **Continue** on the run, or use **Qualify** on the Companies page. Saved pages are reused, so only never-read companies cost Firecrawl credits.
 - `DEV_FIRECRAWL_CREDIT_LIMIT` and `DEV_LLM_CALL_LIMIT` in `.env` are a separate, all-time safety stop for testing. Reaching them pauses everything. Clear them (empty value) for real use.
 
+## Why a company can drop out
+
+Each drop has a reason in the company's status line (Companies page, drawer, and the Log):
+
+| Status | Reason | What to do |
+|---|---|---|
+| `filtered_out` | size, country or keyword hits do not fit **that campaign's** filters. The message shows the ranges and the campaign | Edit the campaign, then Qualify. Or fix the size in the drawer if it is wrong |
+| `no_contact` · no person | nobody on the site fits the titles, and no generic address was found | Add titles or `head` in the campaign, or allow generic addresses |
+| `no_contact` · no usable email | a person was found but the site publishes no email for the company (only a form). Proofhunt never guesses addresses | Set the status by hand and email them yourself, or skip |
+| `failed` | the page could not be read | Qualify again |
+| `maybe` / `rejected` | the fit score is under *Min fit score* | Lower it in the campaign, then Qualify (only the judge runs again) |
+
+Companies with a good score become **leads** in stage `ready`. They wait for you in the **Review queue** until you approve them.
+
 ## Settings that matter
 
 - **Daily cap:** max 50. **Warm-up:** 10 a day, +5 for each full week since the first real send.
@@ -212,7 +227,7 @@ A run goes through stages: discovery → audit → extract → contacts → judg
 docker compose exec api sh -c "pip install -q pytest && python -m pytest -q tests"
 ```
 
-24 tests. They never call a live service.
+34 tests. They never call a live service.
 
 ## If something goes wrong
 

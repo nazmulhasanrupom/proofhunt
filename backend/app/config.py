@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     supabase_key: str = ""
 
     firecrawl_api_key: str = ""
+    # Page reader. When set, Proofhunt reads pages with Crawl4AI first and uses Firecrawl only if that fails.
+    crawl4ai_url: str = ""            # example: https://crawl4ai.example.com
+    crawl4ai_token: str = ""
+    crawl4ai_concurrency: int = 3
+    crawl4ai_timeout: float = 90.0
     # Be gentle with Firecrawl. Free plans allow few requests per minute and few at once.
     firecrawl_min_interval: float = 2.0   # seconds to wait between two requests (any task)
     firecrawl_concurrency: int = 2        # requests in flight at the same time

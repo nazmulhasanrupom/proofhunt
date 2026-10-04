@@ -12,7 +12,7 @@ type Filters = {
   company: { countries: string[]; employeeRanges: number[][]; allowUnknownSize: boolean; webKeywords: string[]; minKeywordHits: number; excludeDomains: string[]; cooldownDays: number };
   person: { titlePriority: string[]; excludeTitle: string[]; seniority: string[]; excludeSeniority: string[]; matchMode: string };
   qualify: { minFitScore: number; maybeFrom: number; demoFrom: number };
-  email: { allowGeneric: boolean; requireMx: boolean };
+  email: { allowGeneric: boolean; allowNoPerson: boolean; requireMx: boolean };
 };
 type Campaign = { id: string; name: string; status: string; filters: Filters; created_at: string };
 
@@ -23,8 +23,15 @@ const DEFAULTS: Filters = {
   person: { titlePriority: ["founder", "co-founder", "ceo", "coo", "head of operations"], excludeTitle: ["intern", "assistant", "junior", "coordinator"],
     seniority: ["owner", "c_suite"], excludeSeniority: ["intern", "entry"], matchMode: "title_or_seniority" },
   qualify: { minFitScore: 70, maybeFrom: 50, demoFrom: 85 },
-  email: { allowGeneric: true, requireMx: true },
+  email: { allowGeneric: true, allowNoPerson: true, requireMx: true },
 };
+
+/** A saved campaign can miss newer fields. Fill them from the defaults so the form never breaks. */
+const withDefaults = (f: Partial<Filters>): Filters => ({
+  ...DEFAULTS, ...f,
+  company: { ...DEFAULTS.company, ...f.company }, person: { ...DEFAULTS.person, ...f.person },
+  qualify: { ...DEFAULTS.qualify, ...f.qualify }, email: { ...DEFAULTS.email, ...f.email },
+});
 
 const rangesText = (r: number[][]) => r.map(([a, b]) => `${a}-${b}`).join(", ");
 const parseRanges = (t: string) => t.split(",").map((x) => x.trim().split("-").map(Number)).filter((p) => p.length === 2 && p.every((n) => !isNaN(n)));
@@ -39,6 +46,7 @@ export default function CampaignsPage() {
   const nav = useNavigate();
   const { data, isLoading } = useQuery({ queryKey: ["campaigns"], queryFn: () => api<Campaign[]>("/campaigns") });
   const [open, setOpen] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [f, setF] = useState<Filters>(DEFAULTS);
   const set = <K extends keyof Filters>(k: K, v: Filters[K]) => setF({ ...f, [k]: v });
@@ -46,10 +54,14 @@ export default function CampaignsPage() {
   const cost = f.maxCompaniesToScan * 4 + queries * 4;
 
   const create = useMutation({
-    mutationFn: () => api("/campaigns", { body: { name, filters: f } }),
-    onSuccess: () => { toast("Campaign created"); setOpen(false); setName(""); qc.invalidateQueries({ queryKey: ["campaigns"] }); },
+    mutationFn: () => (editId
+      ? api(`/campaigns/${editId}`, { method: "PUT", body: { name, filters: f } })
+      : api("/campaigns", { body: { name, filters: f } })),
+    onSuccess: () => { toast(editId ? "Campaign saved" : "Campaign created"); close(); qc.invalidateQueries({ queryKey: ["campaigns"] }); },
     onError: (e: Error) => toast(e.message, true),
   });
+  const close = () => { setOpen(false); setEditId(null); setName(""); setF(DEFAULTS); };
+  const edit = (c: Campaign) => { setEditId(c.id); setName(c.name); setF(withDefaults(c.filters)); setOpen(true); window.scrollTo?.(0, 0); };
   const start = useMutation({
     mutationFn: (id: string) => api<{ id: string }>(`/campaigns/${id}/runs`, { method: "POST" }),
     onSuccess: (r) => { toast("Run started"); nav(`/activity?run=${r.id}`); },
@@ -62,10 +74,11 @@ export default function CampaignsPage() {
 
   return (
     <div className="page">
-      <div className="page-head"><span>Campaigns</span><button className="btn-primary" onClick={() => setOpen(!open)}>{open ? "Close" : "New campaign"}</button></div>
+      <div className="page-head"><span>Campaigns</span><button className="btn-primary" onClick={() => (open ? close() : setOpen(true))}>{open ? "Close" : "New campaign"}</button></div>
       <div className="page-body flex flex-col gap-4">
         {open && (
-          <div className="card flex flex-col gap-4">
+          <div className="card flex flex-col gap-4" key={editId ?? "new"}>
+            {editId && <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Editing a campaign. Changes apply to new runs, and to Qualify on the Companies page. Companies already filtered out are checked again with the new filters when you press Qualify.</div>}
             <div><span className="label">Name</span><input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="SEO agencies — US/UK" /></div>
             <div className="grid grid-cols-4 gap-3">
               <Num label="Leads wanted" value={f.leadsWanted} onChange={(n) => set("leadsWanted", n)} />
@@ -92,6 +105,7 @@ export default function CampaignsPage() {
             <div><span className="label">Exclude domains</span><ChipInput value={f.company.excludeDomains} onChange={(v) => set("company", { ...f.company, excludeDomains: v })} /></div>
             <div><span className="label">Title priority (first wins)</span><ChipInput value={f.person.titlePriority} onChange={(v) => set("person", { ...f.person, titlePriority: v })} /></div>
             <div><span className="label">Exclude titles</span><ChipInput value={f.person.excludeTitle} onChange={(v) => set("person", { ...f.person, excludeTitle: v })} /></div>
+            <div><span className="label">Titles that count by rank, even if the title is not on the list above (owner, c_suite, head)</span><ChipInput value={f.person.seniority} onChange={(v) => set("person", { ...f.person, seniority: v })} /></div>
             <div className="grid grid-cols-5 gap-3">
               <Num label="Min fit score" value={f.qualify.minFitScore} onChange={(n) => set("qualify", { ...f.qualify, minFitScore: n })} />
               <Num label="Maybe from" value={f.qualify.maybeFrom} onChange={(n) => set("qualify", { ...f.qualify, maybeFrom: n })} />
@@ -99,9 +113,10 @@ export default function CampaignsPage() {
               <label className="flex items-end gap-2 pb-2"><input type="checkbox" checked={f.email.allowGeneric} onChange={(e) => set("email", { ...f.email, allowGeneric: e.target.checked })} /> Allow generic email</label>
               <label className="flex items-end gap-2 pb-2"><input type="checkbox" checked={f.email.requireMx} onChange={(e) => set("email", { ...f.email, requireMx: e.target.checked })} /> Require MX</label>
             </div>
+            <label className="flex items-center gap-2"><input type="checkbox" checked={f.email.allowNoPerson} onChange={(e) => set("email", { ...f.email, allowNoPerson: e.target.checked })} /> Keep companies that name nobody on their site: email their generic address (info@, hello@) instead of dropping them</label>
             <div className="flex items-center justify-between">
               <span style={{ color: "var(--text-muted)" }}>Estimated cost: about {cost.toLocaleString()} Firecrawl credits ({f.maxCompaniesToScan} × 4 + {queries} queries × 4)</span>
-              <button className="btn-primary" disabled={!name.trim() || create.isPending} onClick={() => create.mutate()}>Create campaign</button>
+              <button className="btn-primary" disabled={!name.trim() || create.isPending} onClick={() => create.mutate()}>{editId ? "Save changes" : "Create campaign"}</button>
             </div>
           </div>
         )}
@@ -113,8 +128,9 @@ export default function CampaignsPage() {
             <tbody>
               {data.map((c) => (
                 <tr key={c.id}>
-                  <td>{c.name}</td><td>{c.filters.maxCompaniesToScan}</td><td>{c.filters.leadsWanted}</td><td>{new Date(c.created_at).toLocaleDateString()}</td>
+                  <td><button style={{ textDecoration: "underline", textAlign: "left" }} onClick={() => edit(c)}>{c.name}</button></td><td>{c.filters.maxCompaniesToScan}</td><td>{c.filters.leadsWanted}</td><td>{new Date(c.created_at).toLocaleDateString()}</td>
                   <td className="text-right">
+                    <button className="btn" onClick={() => edit(c)}>Edit</button>{" "}
                     <button className="btn" disabled={start.isPending} onClick={() => start.mutate(c.id)}>Start run</button>{" "}
                     <button className="btn btn-danger" onClick={() => { if (confirm(`Delete "${c.name}"?`)) del.mutate(c.id); }}>Delete</button>
                   </td>

@@ -69,7 +69,7 @@ export default function ReviewPage() {
             <div className="flex flex-col gap-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="font-semibold">{lead.people?.name ?? "No contact"} · {lead.people?.title ?? "—"}</div>
+                  <div className="font-semibold">{lead.people?.name || "No named person"} · {lead.people?.title || "—"}</div>
                   <div style={{ color: "var(--text-muted)" }}>{lead.people?.email ?? "—"} ({lead.people?.email_kind ?? "—"}) · {lead.companies.domain}</div>
                 </div>
                 <div className="flex gap-2">
