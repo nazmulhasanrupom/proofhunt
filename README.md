@@ -79,7 +79,7 @@ cp .env.example .env
 ### 2. Set up Supabase
 
 1. Create a project at supabase.com.
-2. Open **SQL Editor**. Paste and run `backend/migrations/001_init.sql`. Then run `backend/migrations/002_firecrawl_balance.sql`. Then run `backend/migrations/003_profiles.sql`. Then run `backend/migrations/004_cache.sql`.
+2. Open **SQL Editor**. Paste and run `backend/migrations/001_init.sql`. Then run `backend/migrations/002_firecrawl_balance.sql`. Then run `backend/migrations/003_profiles.sql`. Then run `backend/migrations/004_cache.sql`. Then run `backend/migrations/005_ima.sql`.
 3. Open **Project Settings → API**. Copy the **Project URL** and the **service_role** key.
    The `service_role` key has full database access. It goes only in `.env` on your server. Never put it in a browser or a public place.
 
@@ -194,6 +194,53 @@ The same thing works on any host:
 `Ctrl+K` jumps to any page, company or lead. The **Log** bar at the bottom of every page shows what the backend is doing right now (runs, sending, replies, email edits).
 
 **Rewrite with AI:** in the Review queue and the Outbox, every email has a *Rewrite with AI* button. Type what to change (optional), read the new version, then save or discard it. The opt-out line and your signature are never touched by the AI.
+
+---
+
+## IMA mode (influencer marketing agency)
+
+A profile has a type. **New profile** asks for it:
+
+- **Freelancer:** you upload a CV. Proofhunt finds agencies that could buy your services. This is the normal mode.
+- **General → IMA:** you upload an **agency brief**. Proofhunt finds **brands that already pay YouTube creators**, so you can pitch one of your creators. More business types will be added under *General*.
+
+An IMA run **stops at qualified**: no judge, no report, no demo, no emails, no creator matching. The audit, extract and contact stages stay the same. What changes for an IMA profile:
+
+| Part | Freelancer | IMA |
+| --- | --- | --- |
+| File | CV | Agency brief |
+| Offer map | Services, problems, signals | **Brand map**: one row per niche. Signals are proof that a brand pays creators (creator program, affiliate program, influencer hiring, sponsors YouTubers, funding) |
+| Web keywords | How an agency describes itself | **Product categories** of the brands you want (for example `ai writing tool`) |
+| Searches | `"keyword" agency <country>` | `"keyword" "creator program"`, `"affiliate program"`, `"partner with creators"`, careers `"influencer marketing"`, careers `"creator partnerships"`, `"ambassador program"`. No country in the search |
+| Result check | Agency or not | Keeps only sites that **sell a product**. Drops agencies, influencer platforms, directories, review sites, creators, news |
+| Pages read | about, contact, careers, services | creator / affiliate / ambassador page, about, careers, contact |
+| Campaign defaults | Countries, small teams | Any country, any size, buyer titles such as influencer marketing manager and creator partnerships |
+| Inboxes | `info@`, `hello@` ... | also `creators@`, `influencers@`, `affiliates@`, `sponsorships@`, `collabs@`, `ambassadors@` |
+| After contacts | Judge, report, demo, 4 emails, review, send | **Lead sheet.** Every brand that gets through the filters is `qualified` and becomes one row |
+| Menu | all pages | no Review queue, Outbox or Replies |
+
+**The lead sheet** (Leads page, and *Download CSV*) has these columns:
+
+| Column | What it holds |
+| --- | --- |
+| `website_url` | the page where the brand was found (the search result) |
+| `Brand` | brand name |
+| `brand_url` | the brand's own site |
+| `category` | what the brand sells |
+| `sponsorships` | the proof: quotes from the brand's site that show it pays creators, each with its page. Empty when none |
+| `creators` | which creator-spend signals were found (creator program, affiliate program ...) |
+| `Emails` | every email published on the brand's site, the contact's first |
+| `Employees` | company size, when the site says it |
+| `type` | **good to go** when an email was found. **do manually** when none was found. The brand is kept either way. On the Leads page you can type an email into a "do manually" row, and it becomes "good to go" |
+| `country`, `contact_name`, `contact_title`, `email_found_on`, `proof_count` | extras that come with it |
+
+An email is only one that is published on the brand's own site. Nothing is guessed.
+
+**The agency brief.** A PDF, DOCX, TXT or MD file with: the agency (name, sender name, website, commission model), 1 to 3 niches, and one block per creator (channel link, niche, average views, audience countries, content style, past sponsors, open to deals now). The AI reads it, then the code checks every number, country, sponsor and link against the text of the brief. **A value that is not in the brief is dropped.** Nothing is invented.
+
+**Steps:** New profile → General → IMA → upload the brief → **Generate brand map** → read and edit it on the Offer map page → New campaign → **AI recommended fill** (it writes the product keywords) → start with a small run.
+
+Not built for IMA (by choice): the judge, reports, demo and emails. Not built yet: sponsor mining from YouTube video descriptions, the halal check, and the *Add brands* import.
 
 ---
 

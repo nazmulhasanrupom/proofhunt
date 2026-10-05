@@ -6,6 +6,7 @@ from urllib.parse import urljoin, urlparse
 from ..db import get_db
 from ..services import cache, firecrawl, scraper
 from ..services.usage import BudgetExceeded, log_event
+from .kinds import IMA, kind_of
 from .scope import todo as scope_todo
 
 PRIORITY = [
@@ -14,10 +15,17 @@ PRIORITY = [
     ("careers", r"career|jobs|join|hiring"),
     ("services", r"services|what-we-do|seo"),
 ]
+# IMA: the proof that a brand pays creators sits on its creator, affiliate and partner program pages, so those come first
+PRIORITY_IMA = [
+    ("creators", r"creator|influencer|ambassador|affiliate|sponsor|partner-?program|become-a-partner"),
+    ("about", r"about|team|who-we-are|people"),
+    ("careers", r"career|jobs|join|hiring"),
+    ("contact", r"contact"),
+]
 PARKED = cache.PARKED
 
 
-def pick_pages(home_url: str, links: list[str]) -> list[tuple[str, str]]:
+def pick_pages(home_url: str, links: list[str], priority: list[tuple[str, str]] = PRIORITY) -> list[tuple[str, str]]:
     """Up to 3 more pages: same domain, by priority. Returns [(kind, url)]."""
     host = urlparse(home_url).netloc.lower().removeprefix("www.")
     same = []
@@ -27,7 +35,7 @@ def pick_pages(home_url: str, links: list[str]) -> list[tuple[str, str]]:
         if p.netloc.lower().removeprefix("www.") == host and p.scheme in ("http", "https") and p.path not in ("", "/"):
             same.append(u)
     picked = []
-    for kind, rx in PRIORITY:
+    for kind, rx in priority:
         for u in same:
             if re.search(rx, urlparse(u).path.lower()) and all(u != x[1] for x in picked):
                 picked.append((kind, u))
@@ -55,7 +63,7 @@ async def audit_company(company: dict, run_id: str) -> bool:
         db.table("companies").update({"status": "failed", "fail_reason": "parked"}).eq("id", cid).execute()
         return False
     links = home["links"] or re.findall(r'href=["\']([^"\'#]+)', home.get("raw_html") or "")  # cached home has no link list
-    picked = pick_pages(home_url, links)
+    picked = pick_pages(home_url, links, PRIORITY_IMA if kind_of(company.get("profile_id")) == IMA else PRIORITY)
     for kind, url in picked:
         try:
             await scraper.scrape(url, ["markdown"], kind != "contact", cid, kind, run_id)

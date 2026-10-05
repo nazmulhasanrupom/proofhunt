@@ -7,6 +7,8 @@ import Empty from "../components/Empty";
 import Skeleton from "../components/Skeleton";
 import Drawer, { KV, Tabs } from "../components/Drawer";
 import { LEAD_STAGES, dayTime, stageColor } from "../lib/fmt";
+import { useProfiles } from "../lib/profile";
+import BrandLeadsPage from "./BrandLeadsPage";
 
 type Row = {
   id: string; stage: string; score: number | null; created_at: string; company_id: string;
@@ -24,7 +26,12 @@ type Company = { evidence: { id: string; quote: string; url: string; verified: b
 const TABS = ["Overview", "Evidence", "Emails", "Report", "Demo", "Notes"];
 const label = (s: string) => s.replace(/_/g, " ");
 
+/** An IMA profile has no emails and no judge: its leads are brands in a sheet. A freelancer profile keeps the board. */
 export default function LeadsPage() {
+  return useProfiles().current?.kind === "ima" ? <BrandLeadsPage /> : <FreelancerLeads />;
+}
+
+function FreelancerLeads() {
   const toast = useToast();
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();

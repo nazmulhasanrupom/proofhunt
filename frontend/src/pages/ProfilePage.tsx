@@ -3,15 +3,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Pencil } from "lucide-react";
 import { api } from "../api/client";
-import { useProfiles } from "../lib/profile";
+import { KIND_LABEL, useProfiles, type ProfileKind } from "../lib/profile";
 import { useToast } from "../components/Toast";
 import Empty from "../components/Empty";
 import NewProfileDialog from "../components/NewProfileDialog";
 import Skeleton from "../components/Skeleton";
 
+type Creator = { name: string; channel_url: string; niche: string; avg_views: string; subscribers: string; audience_countries: string[]; content_style: string; past_sponsors: string[]; open_to_deals: boolean | null };
 type Detail = {
-  id: string; name: string; file_name: string | null; created_at: string;
-  parsed: { name: string; headline: string; skills: string[]; tools: string[]; proof_points: string[] } | null;
+  id: string; name: string; kind: ProfileKind; file_name: string | null; created_at: string;
+  parsed: { name: string; headline: string; skills: string[]; tools: string[]; proof_points: string[];
+    agency?: { name: string; sender_name: string; website: string; commission_model: string }; niches?: string[]; roster?: Creator[] } | null;
   counts: { campaigns: number; companies: number; leads: number; emails_sent: number };
 };
 
@@ -34,6 +36,9 @@ export default function ProfilePage() {
     queryFn: () => api<Detail>(`/profiles/${current!.id}`),
   });
   const refresh = () => { qc.invalidateQueries({ queryKey: ["profile"] }); qc.invalidateQueries({ queryKey: ["profiles"] }); };
+  const isIma = data?.kind === "ima";
+  const doc = isIma ? "Agency brief" : "CV";                       // what the uploaded file is
+  const genLabel = isIma ? "Generate brand map" : "Generate offer map";
 
   // "/profile?new=1" (from the top bar, or a page that needs a profile) opens the dialog. The flag is used up at once: when the page
   // is rebuilt for a newly picked profile it must not open the dialog again.
@@ -44,7 +49,7 @@ export default function ProfilePage() {
   }, [params, setParams]);
   const replace = useMutation({
     mutationFn: (f: File) => { const form = new FormData(); form.append("file", f); return api(`/profiles/${data!.id}/cv`, { method: "PUT", form }); },
-    onSuccess: () => { toast("CV replaced. Press Generate offer map to use it"); refresh(); },
+    onSuccess: () => { toast(`${doc} replaced. Press ${genLabel} to use it`); refresh(); },
     onError: (e: Error) => toast(e.message, true),
   });
   const rename = useMutation({
@@ -54,7 +59,7 @@ export default function ProfilePage() {
   });
   const gen = useMutation({
     mutationFn: (id: string) => api(`/profiles/${id}/offer-map`, { method: "POST" }),
-    onSuccess: () => { toast("Offer map created"); qc.invalidateQueries({ queryKey: ["offer-map"] }); nav("/offer-map"); },
+    onSuccess: () => { toast(isIma ? "Brand map created" : "Offer map created"); qc.invalidateQueries({ queryKey: ["offer-map"] }); nav("/offer-map"); },
     onError: (e: Error) => toast(e.message, true),
   });
   const del = useMutation({
@@ -75,7 +80,7 @@ export default function ProfilePage() {
         <button className="btn-primary" onClick={() => setCreating(true)}>New profile</button>
       </div>
       <div className="page-body flex flex-col gap-4">
-        {!current && <Empty text="No profile yet. A profile is one CV. Every section shows the data of the profile you pick." action="Create profile" onAction={() => setCreating(true)} />}
+        {!current && <Empty text="No profile yet. A profile is one CV or one agency brief. Every section shows the data of the profile you pick." action="Create profile" onAction={() => setCreating(true)} />}
         {current && isLoading && <Skeleton />}
         {data && (
           <>
@@ -84,6 +89,7 @@ export default function ProfilePage() {
                 {newName === null ? (
                   <>
                     <div className="text-base font-semibold">{data.name}</div>
+                    <span className="chip">{KIND_LABEL[data.kind]}</span>
                     <button aria-label="Rename profile" title="Rename" onClick={() => setNewName(data.name)}><Pencil size={14} /></button>
                   </>
                 ) : (
@@ -95,16 +101,48 @@ export default function ProfilePage() {
                 )}
               </div>
               <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
-                {data.file_name ?? "CV"} · added {new Date(data.created_at).toLocaleDateString()} · {summary(data.counts, " · ")}
+                {data.file_name ?? doc} · added {new Date(data.created_at).toLocaleDateString()} · {summary(data.counts, " · ")}
               </div>
               <div className="flex flex-wrap gap-2">
-                <button className="btn-primary" disabled={gen.isPending} onClick={() => gen.mutate(data.id)}>{gen.isPending ? "Working…" : "Generate offer map"}</button>
-                <button className="btn" disabled={replace.isPending} onClick={() => input.current?.click()}>{replace.isPending ? "Reading your CV…" : "Replace CV"}</button>
+                <button className="btn-primary" disabled={gen.isPending} onClick={() => gen.mutate(data.id)}>{gen.isPending ? "Working…" : genLabel}</button>
+                <button className="btn" disabled={replace.isPending} onClick={() => input.current?.click()}>{replace.isPending ? `Reading your ${doc.toLowerCase()}…` : `Replace ${doc.toLowerCase()}`}</button>
                 <input ref={input} type="file" hidden accept=".pdf,.docx,.txt,.md" onChange={(e) => { const f = e.target.files?.[0]; if (f) replace.mutate(f); e.target.value = ""; }} />
                 <button className="btn btn-danger" disabled={del.isPending} onClick={() => confirmDelete(data)}>Delete profile</button>
               </div>
             </div>
-            {p && (
+            {p && isIma && (
+              <div className="card flex flex-col gap-4">
+                <div>
+                  <div className="font-semibold">{p.agency?.name || p.name}</div>
+                  <div style={{ color: "var(--text-muted)" }}>{p.headline}</div>
+                  <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
+                    {[p.agency?.sender_name && `Sender: ${p.agency.sender_name}`, p.agency?.website, p.agency?.commission_model].filter(Boolean).join(" · ")}
+                  </div>
+                </div>
+                <div><span className="label">Niches</span><div className="flex flex-wrap gap-1.5">{(p.niches ?? []).map((s) => <span key={s} className="chip">{s}</span>)}</div></div>
+                <div>
+                  <span className="label">Roster ({p.roster?.length ?? 0})</span>
+                  <div className="flex flex-col gap-2">
+                    {(p.roster ?? []).map((c, i) => (
+                      <div key={`${c.name}-${i}`} className="rounded-md border p-2" style={{ borderColor: "var(--border)", fontSize: 13 }}>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold">{c.name || c.channel_url}</span>
+                          {c.niche && <span className="chip">{c.niche}</span>}
+                          {c.open_to_deals !== null && <span style={{ color: c.open_to_deals ? "var(--ok)" : "var(--text-faint)" }}>{c.open_to_deals ? "open to deals" : "not open to deals"}</span>}
+                        </div>
+                        <div style={{ color: "var(--text-muted)" }}>
+                          {[c.avg_views && `${c.avg_views} avg views`, c.subscribers && `${c.subscribers} subscribers`, c.audience_countries.length > 0 && c.audience_countries.join(", "), c.content_style].filter(Boolean).join(" · ")}
+                        </div>
+                        {c.past_sponsors.length > 0 && <div style={{ color: "var(--text-muted)" }}>Past sponsors: {c.past_sponsors.join(", ")}</div>}
+                      </div>
+                    ))}
+                    {(p.roster ?? []).length === 0 && <div style={{ color: "var(--text-muted)", fontSize: 13 }}>No creators were found in the brief. Replace the brief with one that has a roster.</div>}
+                  </div>
+                </div>
+                <div style={{ color: "var(--text-faint)", fontSize: 12 }}>Only what the brief says is shown. A number the brief does not give stays empty. Press {genLabel}, then edit the niches and signals on the Offer map page.</div>
+              </div>
+            )}
+            {p && !isIma && (
               <div className="card flex flex-col gap-4">
                 <div><div className="font-semibold">{p.name}</div><div style={{ color: "var(--text-muted)" }}>{p.headline}</div></div>
                 <div><span className="label">Skills</span><div className="flex flex-wrap gap-1.5">{p.skills.map((s) => <span key={s} className="chip">{s}</span>)}</div></div>

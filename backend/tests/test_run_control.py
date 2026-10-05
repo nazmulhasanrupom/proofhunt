@@ -122,6 +122,7 @@ def test_discovery_stops_between_searches(monkeypatch):
     async def no_llm(*a, **k): return {"queries": []}
     monkeypatch.setattr(discovery, "get_db", lambda: D())
     monkeypatch.setattr(discovery, "load_map", lambda pid: [])
+    monkeypatch.setattr(discovery, "kind_of", lambda pid: "freelancer")
     monkeypatch.setattr(discovery.firecrawl, "search", fake_search)
     monkeypatch.setattr(discovery.llm, "complete_json", no_llm)
     f = CampaignFilters().model_dump()
