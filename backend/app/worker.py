@@ -1,9 +1,12 @@
+import asyncio
+
 from arq import cron
 from arq.connections import RedisSettings
 
 from .config import settings
 from .db import get_db
 from .pipeline.orchestrator import run_campaign
+from .services import cache
 from .sending import scheduler, tracker
 
 
@@ -46,6 +49,13 @@ async def bounce_tick(ctx):
     return await _locked(ctx, "bounces", tracker.check_bounces, 600)
 
 
+async def cache_tick(ctx):
+    """Every day: delete cache rows older than 2 months, so the cache never serves stale facts."""
+    async def purge():
+        return await asyncio.to_thread(cache.purge)
+    return await _locked(ctx, "cache", purge, 600)
+
+
 async def on_startup(ctx):
     """If the worker died mid-run, the run still says 'running' and its lock blocks Resume for hours.
     At start nothing can be running yet, so: clear the locks and pause those runs. The user presses Resume."""
@@ -66,6 +76,7 @@ class WorkerSettings:
         cron(send_tick, minute=set(range(0, 60, 2)), second=0, timeout=300),
         cron(reply_tick, minute={0, 10, 20, 30, 40, 50}, second=30, timeout=600),
         cron(bounce_tick, minute={5, 20, 35, 50}, second=30, timeout=600),
+        cron(cache_tick, hour={3}, minute={15}, second=0, timeout=600),
     ]
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
     max_jobs = 2

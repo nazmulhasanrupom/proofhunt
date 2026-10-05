@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from urllib.parse import urljoin, urlparse
 
 from ..db import get_db
-from ..services import firecrawl, scraper
+from ..services import cache, firecrawl, scraper
 from ..services.usage import BudgetExceeded, log_event
 from .scope import todo as scope_todo
 
@@ -14,7 +14,7 @@ PRIORITY = [
     ("careers", r"career|jobs|join|hiring"),
     ("services", r"services|what-we-do|seo"),
 ]
-PARKED = re.compile(r"domain (is )?for sale|buy this domain|this domain may be for sale|parked (free|domain)|sedoparking", re.I)
+PARKED = cache.PARKED
 
 
 def pick_pages(home_url: str, links: list[str]) -> list[tuple[str, str]]:

@@ -1,6 +1,9 @@
-"""Read one page. Crawl4AI first (free), Firecrawl if that fails. Pages already saved are never read again."""
+"""Read one page. Crawl4AI first (free), Firecrawl if that fails.
+A page saved less than 2 months ago is not read again, not even for another profile. An older page is read again."""
+from datetime import datetime, timezone
+
 from ..db import get_db
-from ..services import crawl4ai, firecrawl
+from ..services import cache, crawl4ai, firecrawl
 from ..services.usage import log_event
 
 
@@ -8,12 +11,15 @@ async def scrape(url: str, formats: list[str], only_main_content: bool,
                  company_id: str, kind: str = "other", run_id: str | None = None) -> dict:
     """Returns {'markdown','links','raw_html','status','cached','source'}. Raises firecrawl.ScrapeError on failure."""
     db = get_db()
-    cached = db.table("pages").select("markdown,raw_html").eq("company_id", company_id).eq("url", url).execute().data
-    if not cached:  # the same site may be saved under another profile: copy it, no credit
-        cached = db.table("pages").select("kind,markdown,raw_html").eq("url", url).limit(1).execute().data
-        if cached:
-            db.table("pages").upsert({"company_id": company_id, "url": url, "kind": cached[0]["kind"], "markdown": cached[0]["markdown"],
-                                      "raw_html": cached[0]["raw_html"]}, on_conflict="company_id,url").execute()
+    fresh = cache.cutoff()
+    cached = db.table("pages").select("markdown,raw_html").eq("company_id", company_id).eq("url", url).gte("fetched_at", fresh).execute().data
+    if not cached:  # the same site may be saved under another profile (or an earlier run): copy it, no credit
+        hit = cache.page_get(url)
+        if hit:
+            db.table("pages").upsert({"company_id": company_id, "url": url, "kind": hit["kind"], "markdown": hit["markdown"],
+                                      "raw_html": hit["raw_html"], "fetched_at": datetime.now(timezone.utc).isoformat()},
+                                     on_conflict="company_id,url").execute()
+            cached = [hit]
     if cached:
         return {"markdown": cached[0]["markdown"], "links": [], "raw_html": cached[0]["raw_html"],
                 "status": 200, "cached": True, "source": "saved"}
@@ -29,8 +35,10 @@ async def scrape(url: str, formats: list[str], only_main_content: bool,
     if out is None:
         out, source = await firecrawl.fetch(url, formats, only_main_content, run_id), "firecrawl"
     out["source"] = source
+    raw = out["raw_html"] if kind == "home" else None
     db.table("pages").upsert({
-        "company_id": company_id, "url": url, "kind": kind,
-        "markdown": out["markdown"], "raw_html": out["raw_html"] if kind == "home" else None,
+        "company_id": company_id, "url": url, "kind": kind, "markdown": out["markdown"], "raw_html": raw,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
     }, on_conflict="company_id,url").execute()
+    cache.page_put(url, kind, out["markdown"], raw)
     return out

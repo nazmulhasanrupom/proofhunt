@@ -7,6 +7,7 @@ from ..pipeline import judge as judge_mod
 from ..pipeline.filters import apply_filters, size_bucket
 from ..pipeline.scope import chunks
 from ..schemas import CampaignFilters
+from ..services import cache
 from ..services.usage import log_event
 
 router = APIRouter()
@@ -81,7 +82,8 @@ async def qualify(body: QualifyIn, request: Request, pid: ProfileId):
     with_pages: set[str] = set()
     with_person: set[str] = set()
     for part in chunks([c["id"] for c in comps]):
-        with_pages |= {p["company_id"] for p in db.table("pages").select("company_id").in_("company_id", part).execute().data}
+        # a page older than 2 months does not count: the company is read again, so the facts stay fresh
+        with_pages |= {p["company_id"] for p in db.table("pages").select("company_id").in_("company_id", part).gte("fetched_at", cache.cutoff()).execute().data}
         with_person |= {p["company_id"] for p in db.table("people").select("company_id").in_("company_id", part).eq("selected", True).execute().data}
 
     # which campaign decides the filters: the one given, else the one that found the company, else the newest. Only campaigns of this profile
