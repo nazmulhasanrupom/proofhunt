@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from app import deps
 from app.routers import profiles
 from app.sending import scheduler as sch
-from app.services import scraper, usage
+from app.services import cache, scraper, usage
 
 A, B = "11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"
 
@@ -17,6 +17,7 @@ class Query:
     def __init__(self, db, table): self.db, self.name, self.filters, self.row = db, table, [], None
     def select(self, *_, **__): return self
     def eq(self, col, val): self.filters.append((col, val)); return self
+    def gte(self, *_): return self             # age is checked in the cache tests
     def limit(self, *_): return self
     def order(self, *_, **__): return self
     def insert(self, row): self.row = row; return self
@@ -99,10 +100,11 @@ def test_sender_name(monkeypatch):
 # ---- a page saved for one profile is not read again for another ----
 
 def test_saved_page_is_copied_to_the_other_profile(monkeypatch):
-    saved_elsewhere = {"kind": "home", "markdown": "saved text " * 20, "raw_html": "<h>"}
-    # nothing for this company, but the same url is saved under another company
-    db = Db(pages=lambda filters: [] if any(c == "company_id" for c, _ in filters) else [saved_elsewhere])
+    saved_elsewhere = {"url": "https://a.com", "kind": "home", "markdown": "saved text " * 20, "raw_html": "<h>"}
+    # nothing for this company, but the same url is in the cache (another profile read it)
+    db = Db(pages=[], page_cache=[saved_elsewhere])
     monkeypatch.setattr(scraper, "get_db", lambda: db)
+    monkeypatch.setattr(cache, "get_db", lambda: db)
     monkeypatch.setattr(scraper.crawl4ai, "enabled", lambda: (_ for _ in ()).throw(AssertionError("must not read the site again")))
     out = asyncio.run(scraper.scrape("https://a.com", [], False, B, "home"))
     assert out["cached"] and out["raw_html"] == "<h>"

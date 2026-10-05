@@ -21,7 +21,7 @@ Your CV ─► Offer map ─► Campaign ─► Discovery ─► Audit ─► Fi
 1. **CV → profile → offer map.** Each CV (PDF, DOCX, TXT) is a **profile** with a name you choose, for example "SEO consultant" and "Web developer". Every page shows one profile at a time (the dropdown in the top right corner), so campaigns, companies, leads, emails and replies never mix. The AI turns the CV into an *offer map*: the services you sell, the problems they solve, and **signals** to look for on a prospect's site (a phrase, a missing tool, a tool in use, a hiring ad, or an AI check). You can edit all of it.
 2. **Campaign.** Pick countries (or tick **Any country**), company size, job titles and keywords. Press **AI recommended fill** and the AI fills every field, including the web keywords, from the profile's CV and offer map. Add a short note first if you want to steer it ("only the UK, teams under 20"). It never plans more than the Firecrawl credits you have left, and nothing is saved until you save. The form shows the credit cost before you start.
 3. **Discovery.** Firecrawl search finds agency websites. Directory and list sites are dropped. Each domain is cleaned and de-duplicated.
-4. **Audit.** Proofhunt reads up to 4 pages per company (home, about, contact, careers/services). Crawl4AI reads them first, Firecrawl is the fallback. Pages are saved and never fetched twice.
+4. **Audit.** Proofhunt reads up to 4 pages per company (home, about, contact, careers/services). Crawl4AI reads them first, Firecrawl is the fallback. Pages are saved in a **2-month cache** shared by all profiles: a site read for one profile costs no credit for another.
 5. **Extract and verify.** Code checks and the AI pull out facts. **Every quote is checked against the saved page text.** A quote that is not on the page is thrown away.
 6. **Filters.** Companies that do not match your campaign are dropped, with the proof (for example "250 full-time specialists").
 7. **Contact pick.** Proofhunt picks the right person from the site (staff only, never a client quoted in a testimonial). It uses **only emails published on the company's own website**. It never guesses an address. If the site names nobody but publishes a generic address (info@, hello@), the lead is that address (switch off in the campaign: *Keep companies that name nobody*). With no usable email the company is marked `no_contact`.
@@ -32,6 +32,16 @@ Your CV ─► Offer map ─► Campaign ─► Discovery ─► Audit ─► Fi
 12. **Sending engine.** Sends through your Gmail inside a daily cap, a warm-up ramp, random gaps, and a send window in the *lead's* time zone, Monday to Friday.
 13. **Tracking.** Replies and bounces are found automatically. A reply stops the sequence. "No" or "unsubscribe" adds the address to the do-not-contact list forever.
 14. **Stats.** The dashboard shows the funnel and reply rates per offer, signal, country, size and score band. Use the top signals to improve your offer map.
+
+### The 2-month cache
+
+Proofhunt keeps what it learned about a company site for **2 months**, for every profile together. The second profile that finds the same site pays no Firecrawl credit and no AI call to read it.
+
+- **Cached:** the pages, and what the AI read from them (company facts, people, evidence quotes). The quotes are checked against the pages again, and the code checks and campaign filters run again for each campaign.
+- **Never cached:** anything made for you as a freelancer: the judgment (fit score, problem, fix), reports, demo specs and emails. They are made again for each profile.
+- **Never cached:** errors. A site that could not be read, an empty page, a parked domain or a failed AI read is tried again next time.
+- **Fresh:** a cache row older than 60 days is not used, and the worker deletes it every day at 03:15. A page saved for a company more than 60 days ago is read again.
+- Run `backend/migrations/004_cache.sql` once. Without it everything still works, only without the cache.
 
 ### Safety rules built in
 
@@ -69,7 +79,7 @@ cp .env.example .env
 ### 2. Set up Supabase
 
 1. Create a project at supabase.com.
-2. Open **SQL Editor**. Paste and run `backend/migrations/001_init.sql`. Then run `backend/migrations/002_firecrawl_balance.sql`. Then run `backend/migrations/003_profiles.sql`.
+2. Open **SQL Editor**. Paste and run `backend/migrations/001_init.sql`. Then run `backend/migrations/002_firecrawl_balance.sql`. Then run `backend/migrations/003_profiles.sql`. Then run `backend/migrations/004_cache.sql`.
 3. Open **Project Settings → API**. Copy the **Project URL** and the **service_role** key.
    The `service_role` key has full database access. It goes only in `.env` on your server. Never put it in a browser or a public place.
 
@@ -170,10 +180,10 @@ The same thing works on any host:
 | Page | What it does |
 |---|---|
 | Dashboard | Qualified leads, sent this week, reply rate, credits left, funnel, top signals, hot replies |
-| Activity / Runs | Pick any run. See its companies, per-stage usage and live log. Pause, resume, cancel. **Pause and Cancel stop all spending**: no Firecrawl or AI call starts after you press them, in any stage. A run works in batches of 10 companies (search, read, contact, judge) and **stops as soon as "Leads wanted" is reached**, so no credits go to companies you do not need. To get more, raise "Leads wanted" in the campaign and press **Continue**. A manual Qualify run does not use that limit. **Continue** picks up companies a stage limit left behind. **Qualify the N found** stops searching and qualifies what a paused run already found |
+| Activity / Runs | Pick any run. See its companies, per-stage usage and live log. Pause, resume, cancel. **Pause and Cancel stop all spending**: no Firecrawl or AI call starts after you press them, in any stage. A run works in batches of **5 companies**. Each batch goes all the way (read, contact, judge, report, email drafts) and only then the next 5 start. When nothing is left, it searches again. A search that finds more than 5 companies is worked off 5 at a time before any new search. It **stops as soon as "Leads wanted" is reached**, so no credits go to companies you do not need. To get more, raise "Leads wanted" in the campaign and press **Continue**. A manual Qualify run does not use that limit. **Continue** picks up companies a stage limit left behind. **Qualify the N found** stops searching and qualifies what a paused run already found |
 | Profile & CV / Offer map | Create, rename and delete profiles (one CV each), or replace a profile's CV. Edit services, problems, proof and signals |
 | Campaigns | Filters and the credit estimate. Click a campaign (or **Edit**) to change it. **AI recommended fill** (in the form, and on each campaign) writes every field for you to review, with **Undo AI fill**. **Any country** removes the country filter and the country in the searches |
-| Companies | Every company with facts, quotes, people and the judgment. **Qualify** one company, or tick several (or select all) and press **Qualify selected**. You choose whose filters decide. It starts a manual run you can watch in Activity. Saved pages and saved AI work are reused. A company that was only filtered out is checked against the filters again for free, so widening a campaign's size range and pressing Qualify is enough. You can also **set the status by hand** (one or many) and fix a wrong size or country in the drawer |
+| Companies | Every company with facts, quotes, people and the judgment. **Qualify** one company, or tick several (or select all) and press **Qualify selected**. You choose whose filters decide. It starts a manual run you can watch in Activity. Saved pages and saved AI work are reused. Tick companies and press **Download CSV** (or **Share CSV** where your browser can share files) to get their data as a file: contact, email, facts, judgment and evidence. A company that was only filtered out is checked against the filters again for free, so widening a campaign's size range and pressing Qualify is enough. You can also **set the status by hand** (one or many) and fix a wrong size or country in the drawer |
 | Leads | Board (drag to change stage) or table. Emails, report, demo, notes |
 | Review queue | Approve, edit, regenerate or skip drafts |
 | Outbox / Replies | Scheduled and sent emails. **Edit**, **Unapprove** (back to draft, or back to the Review queue if nothing was sent) or **Delete** any email that is not sent yet. Replies with a label (interested, not now, …) |
@@ -233,7 +243,7 @@ docker compose exec api sh -c "pip install -q pytest && python -m pytest -q test
 
 | Problem | Fix |
 |---|---|
-| `/health` shows `db: error` | Check `SUPABASE_URL` and `SUPABASE_KEY`. Check you ran all three migrations. The app shows "The database is not updated yet" until `003_profiles.sql` is run |
+| `/health` shows `db: error` | Check `SUPABASE_URL` and `SUPABASE_KEY`. Check you ran all four migrations. The app shows "The database is not updated yet" until `003_profiles.sql` is run |
 | A run stopped | Runs → open it → **Resume**. A worker restart pauses running runs on purpose |
 | "Budget stop" in the log | You hit a limit. Raise or clear it in `.env`, then Resume |
 | "Reconnect Gmail" | Settings → Reconnect Gmail (Google test mode expires every 7 days) |

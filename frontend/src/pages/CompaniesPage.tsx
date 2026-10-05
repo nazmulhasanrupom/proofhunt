@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
-import { api } from "../api/client";
+import { api, canShareFile, fetchFile, saveFile } from "../api/client";
 import { useToast } from "../components/Toast";
 import Empty from "../components/Empty";
 import Skeleton from "../components/Skeleton";
@@ -41,6 +41,15 @@ export default function CompaniesPage() {
     onSuccess: (r, v) => { toast(`${r.updated} set to ${v.status}`); setPicked(new Set()); setBulkStatus(""); qc.invalidateQueries({ queryKey: ["companies"] }); },
     onError: (e: Error) => toast(e.message, true),
   });
+  const exportCsv = useMutation({
+    mutationFn: async (v: { ids: string[]; share: boolean }) => {
+      const f = await fetchFile("/companies/export", { ids: v.ids });
+      if (v.share && canShareFile(f)) { try { await navigator.share({ files: [f], title: f.name }); return; } catch (e) { if ((e as Error).name === "AbortError") return; } }
+      saveFile(f);
+    },
+    onSuccess: (_r, v) => toast(`CSV ready: ${v.ids.length} compan${v.ids.length === 1 ? "y" : "ies"}`),
+    onError: (e: Error) => toast(e.message, true),
+  });
   const pickAll = useMutation({
     mutationFn: () => api<string[]>(`/companies/ids?status=${encodeURIComponent(status)}&q=${encodeURIComponent(q)}`),
     onSuccess: (ids) => { setPicked(new Set(ids)); toast(`${ids.length} selected`); },
@@ -67,6 +76,8 @@ export default function CompaniesPage() {
           <div className="mb-3 flex items-center gap-2 rounded-lg px-3 py-2" style={{ background: "var(--bg-3)" }}>
             <span>{picked.size} selected</span>
             <button className="btn-primary" onClick={() => setDialog([...picked])}>Qualify selected</button>
+            <button className="btn" disabled={exportCsv.isPending} onClick={() => exportCsv.mutate({ ids: [...picked], share: false })}>Download CSV</button>
+            {typeof navigator !== "undefined" && !!navigator.canShare && <button className="btn" disabled={exportCsv.isPending} onClick={() => exportCsv.mutate({ ids: [...picked], share: true })}>Share CSV</button>}
             <select className="select" style={{ width: 170 }} value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)}>
               <option value="">Set status…</option>
               {HAND_STATUS.map((x) => <option key={x}>{x}</option>)}
@@ -132,6 +143,10 @@ export function CompanyDrawer({ id, onClose }: { id: string; onClose: () => void
     mutationFn: (b: { size_estimate?: number; country?: string }) => api(`/companies/${id}`, { method: "PATCH", body: b }),
     onSuccess: () => { toast("Saved. Press Qualify to check the filters again"); setSize(null); setCountry(null); refresh(); }, onError: (e: Error) => toast(e.message, true),
   });
+  const exportCsv = useMutation({
+    mutationFn: async () => saveFile(await fetchFile("/companies/export", { ids: [id] })),
+    onError: (e: Error) => toast(e.message, true),
+  });
   const rejudge = useMutation({
     mutationFn: () => api<{ status: string }>(`/companies/${id}/rejudge`, { method: "POST" }),
     onSuccess: (r) => { toast(`Judged again: ${r.status}`); qc.invalidateQueries({ queryKey: ["company", id] }); qc.invalidateQueries({ queryKey: ["companies"] }); },
@@ -144,7 +159,10 @@ export function CompanyDrawer({ id, onClose }: { id: string; onClose: () => void
         {isLoading && <Skeleton rows={5} />}
         {c && tab === "Facts" && (
           <>
-            <button className="btn-primary mb-3" onClick={() => setDialog(true)}>Qualify this company</button>
+            <div className="mb-3 flex gap-2">
+              <button className="btn-primary" onClick={() => setDialog(true)}>Qualify this company</button>
+              <button className="btn" disabled={exportCsv.isPending} onClick={() => exportCsv.mutate()}>Download CSV</button>
+            </div>
             <div className="mb-3 flex items-center gap-2">
               <span className="label mb-0 w-28">Status</span>
               <select className="select" value={st ?? c.status} onChange={(e) => setSt(e.target.value)}>

@@ -3,7 +3,7 @@ import re
 
 import tldextract
 
-from ..services import llm
+from ..services import cache, llm
 from .fingerprints import detect_tech, tech_in_text
 from .verify import person_in_text, quote_in_text
 
@@ -261,6 +261,16 @@ from .filters import apply_filters, size_bucket  # noqa: E402
 from .offer_map import load_map  # noqa: E402
 
 
+def cached_extract(domain: str, sig: str) -> dict | None:
+    """What the AI read from this site less than 2 months ago, for any profile with the same AI signals. Facts only:
+    the quotes are checked against the saved pages again, and the code checks and the filters run again for this campaign."""
+    hit = cache.extract_get(domain, sig)
+    try:
+        return ExtractOut.model_validate(hit).model_dump() if hit else None
+    except Exception:
+        return None
+
+
 async def run(run_id: str, campaign: dict, should_stop, ids: list[str] | None = None):
     db = get_db()
     f = campaign["filters"]
@@ -269,13 +279,19 @@ async def run(run_id: str, campaign: dict, should_stop, ids: list[str] | None = 
     code_signals = [s for s in signals if s["detector_type"] != "llm"]
     llm_signals = [s for s in signals if s["detector_type"] == "llm"]
     todo = scope_todo(run_id, ["audited"], ids)
+    sig = cache.signal_sig(llm_signals)
     for c in todo:
         if should_stop():
             return
         pages = db.table("pages").select("url,kind,markdown,raw_html").eq("company_id", c["id"]).execute().data
         try:
             a = code_checks(c["domain"], pages, code_signals, f["company"]["webKeywords"])
-            ex = await llm_extract(pages, llm_signals, run_id)
+            ex = cached_extract(c["domain"], sig)
+            if ex is None:
+                ex = await llm_extract(pages, llm_signals, run_id)
+                cache.extract_put(c["domain"], sig, ex)
+            else:
+                log_event(run_id, "info", "extract", f"{c['domain']}: read from the cache, no AI call")
         except BudgetExceeded:
             raise  # a limit is not the company's fault: it stays 'audited' and is picked up next time
         except Exception as e:

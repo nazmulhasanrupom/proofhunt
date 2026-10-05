@@ -91,13 +91,11 @@ async def run_campaign(run_id: str):
     try:
         reached = False
         if ids is None:
-            reached = await _hunt(run_id, campaign, should_stop)  # searches too, and stops at the leads wanted
+            reached = await _hunt(run_id, campaign, should_stop)  # searches too, and stops at the leads wanted. Every batch goes all the way to the emails
             stages = {}
         else:
             # a manual Qualify run: exactly the companies you picked, all stages, no search. The leads wanted do not apply
-            stages = _work_stages(run_id, campaign, should_stop, ids)
-        stages.update({"assets": lambda: _assets_stage(run_id, campaign, should_stop, ids),
-                       "sequences": lambda: _sequence_stage(run_id, campaign, should_stop, ids)})
+            stages = {**_work_stages(run_id, campaign, should_stop, ids), **_lead_stages(run_id, campaign, should_stop, ids)}
         for name, fn in stages.items():
             if should_stop():
                 break
@@ -132,7 +130,7 @@ async def run_campaign(run_id: str):
             log_event(run_id, "error", "run", f"run failed: {e}")
 
 
-BATCH = 10  # companies searched, read and judged together. "Leads wanted" is checked after every batch
+BATCH = 5  # companies that go through every stage together, up to their emails. Only then the next 5 start. "Leads wanted" is checked after every batch
 WORK = ("new", "auditing", "audited", "extracted", "contacted")  # a company in one of these still has stages to go
 
 
@@ -180,15 +178,31 @@ def _work_stages(run_id, campaign, should_stop, ids, stop_when=None) -> dict:
     }
 
 
+def _lead_stages(run_id, campaign, should_stop, ids) -> dict:
+    """The stages after the judge: report and demo, then the email drafts. Only for leads (qualified companies)."""
+    return {
+        "assets": lambda: _assets_stage(run_id, campaign, should_stop, ids),
+        "sequences": lambda: _sequence_stage(run_id, campaign, should_stop, ids),
+    }
+
+
 async def _hunt(run_id: str, campaign: dict, should_stop) -> bool:
-    """Search, audit, read, find the contact and judge, a batch at a time. Stops as soon as the leads wanted exist,
-    so no more Firecrawl credits or AI calls go to companies you do not need. True when it stopped for that reason."""
+    """Work in batches of BATCH companies. Each batch goes through every stage, up to the email drafts, before the
+    next batch starts. When nothing is left to work on, search for more. One search can find more than BATCH
+    companies: they are taken BATCH at a time, in the order they were found, and no new search starts until they are done.
+    Stops as soon as the leads wanted exist, so no more Firecrawl credits or AI calls go to companies you do not need.
+    True when it stopped for that reason."""
     f = campaign["filters"]
     wanted, cap = f["leadsWanted"], f["maxCompaniesToScan"]
     enough = lambda: _count(run_id, "qualified") >= wanted  # noqa: E731
     seen: set[str] = set()   # each company is tried once per execution: a stage limit or a rate limit cannot make us loop
     skip: set[str] = set()   # stages that used their own limit
     n = 0
+    for name, fn in _lead_stages(run_id, campaign, should_stop, None).items():  # leads of an earlier, stopped execution: finish them first
+        if should_stop():
+            return False
+        if not await _stage(run_id, name, fn):
+            skip.add(name)
     while not should_stop():
         if enough():
             log_event(run_id, "info", "run", f"leads wanted reached ({wanted}). No more companies are searched or read")
@@ -205,13 +219,14 @@ async def _hunt(run_id: str, campaign: dict, should_stop) -> bool:
             continue
         seen.update(batch)
         n += 1
-        for name, fn in _work_stages(run_id, campaign, should_stop, batch, enough).items():
+        stages = {**_work_stages(run_id, campaign, should_stop, batch, enough), **_lead_stages(run_id, campaign, should_stop, batch)}
+        for name, fn in stages.items():
             if should_stop():
                 return False
             if name not in skip and not await _stage(run_id, name, fn):
                 skip.add(name)
         c = _save_counters(run_id)
-        log_event(run_id, "info", "run", f"batch {n} done ({len(batch)} companies). Found {c['found']}, qualified {c['qualified']} of {wanted} wanted")
+        log_event(run_id, "info", "run", f"batch {n} done ({len(batch)} companies, up to the emails). Found {c['found']}, qualified {c['qualified']} of {wanted} wanted")
     return False
 
 
