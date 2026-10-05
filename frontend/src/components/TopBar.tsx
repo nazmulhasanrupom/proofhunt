@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Check, ChevronDown, Plus } from "lucide-react";
 import { nav as groups } from "../nav";
-import { useProfiles } from "../lib/profile";
+import { KIND_LABEL, useProfiles } from "../lib/profile";
 
 const items = groups.flatMap((g) => g.items);
 export const isShared = (path: string) => !!items.find((i) => i.path === path)?.shared;
@@ -37,7 +37,7 @@ function Switcher() {
             <button key={p.id} className="menu-item" role="option" aria-selected={p.id === current?.id} onClick={() => { select(p.id); setOpen(false); }}>
               <span className="avatar">{initial(p.name)}</span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate">{p.name}</span>
+                <span className="block truncate">{p.name}{p.kind === "ima" && <span className="menu-sub"> · {KIND_LABEL[p.kind]}</span>}</span>
                 {p.headline && <span className="menu-sub block truncate">{p.headline}</span>}
               </span>
               {p.id === current?.id && <Check size={14} />}

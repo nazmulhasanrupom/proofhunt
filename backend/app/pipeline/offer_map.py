@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field
 
 from ..db import get_db
 from ..services import llm
+from .kinds import IMA, kind_of
 
 
 class SignalIn(BaseModel):
@@ -37,12 +38,22 @@ def signal_error(s: dict) -> str | None:
     return None
 
 
+def brief_for_ai(parsed: dict) -> dict:
+    """What the brand map prompt reads from an IMA profile: the agency, its niches and its roster."""
+    return {"agency": parsed.get("agency") or {}, "niches": parsed.get("niches") or [], "roster": parsed.get("roster") or []}
+
+
 async def generate(profile_id: str) -> list[str]:
+    """The offer map of a freelancer profile, or the brand map of an IMA profile. Both are saved in the same tables."""
     db = get_db()
     prof = db.table("profiles").select("parsed").eq("id", profile_id).single().execute().data
     import json
-    out = await llm.complete_json("offer_map", "smart", llm.load_prompt("offer_map"),
-                                  json.dumps(prof["parsed"]), OfferMapOut)
+    if kind_of(profile_id) == IMA:
+        out = await llm.complete_json("brand_map", "smart", llm.load_prompt("brand_map"),
+                                      json.dumps(brief_for_ai(prof["parsed"] or {})), OfferMapOut)
+    else:
+        out = await llm.complete_json("offer_map", "smart", llm.load_prompt("offer_map"),
+                                      json.dumps(prof["parsed"]), OfferMapOut)
     # old rows of this profile are replaced
     db.table("offer_rows").delete().eq("profile_id", profile_id).execute()
     ids = []

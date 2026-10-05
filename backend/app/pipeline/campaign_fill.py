@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from ..db import get_db
 from ..schemas import CampaignFilters
 from ..services import llm
+from .kinds import IMA, kind_of
 from .offer_map import load_map
 
 
@@ -194,12 +195,26 @@ def merge(current: dict, out: dict, credits_left: int | None) -> tuple[dict, lis
 
 # ---- what the AI gets to read ---------------------------------------------
 
-def build_context(pid: str) -> dict:
+def build_context(pid: str, kind: str = "freelancer") -> dict:
     db = get_db()
     prof = db.table("profiles").select("name,parsed").eq("id", pid).execute().data
     cv = (prof[0]["parsed"] if prof else None) or {}
     rows = [r for r in load_map(pid) if r["active"]]
     others = db.table("campaigns").select("name,filters").eq("profile_id", pid).order("created_at", desc=True).limit(5).execute().data
+    other_campaigns = [{"name": c["name"], "web_keywords": (c["filters"].get("company") or {}).get("webKeywords", [])} for c in others]
+    if kind == IMA:
+        return {
+            "brief": {
+                "agency": cv.get("agency") or {}, "niches": cv.get("niches") or [],
+                "roster": [{k: c.get(k) for k in ("niche", "avg_views", "audience_countries", "content_style", "past_sponsors", "open_to_deals")}
+                           for c in (cv.get("roster") or [])[:12]],
+            },
+            "brand_map": [{
+                "niche": r["service"], "brands_want": r["problems"], "brand_type": r["ideal_customer"],
+                "signals": [{"name": s["name"], "type": s["detector_type"], "config": s["config"]} for s in r["signals"] if s["active"]],
+            } for r in rows],
+            "other_campaigns": other_campaigns,
+        }
     return {
         "cv": {
             "name": cv.get("name"), "headline": cv.get("headline"), "years_experience": cv.get("years_experience"),
@@ -211,16 +226,17 @@ def build_context(pid: str) -> dict:
             "service": r["service"], "problems": r["problems"], "ideal_customer": r["ideal_customer"],
             "signals": [{"name": s["name"], "type": s["detector_type"], "config": s["config"]} for s in r["signals"] if s["active"]],
         } for r in rows],
-        "other_campaigns": [{"name": c["name"], "web_keywords": (c["filters"].get("company") or {}).get("webKeywords", [])} for c in others],
+        "other_campaigns": other_campaigns,
     }
 
 
 async def suggest(pid: str, name: str, hint: str, current: dict, credits_left: int | None) -> dict:
-    ctx = build_context(pid)
-    payload = {**ctx, "campaign_name": name.strip(), "note_from_freelancer": hint.strip(), "credits_left": credits_left}
-    out = await llm.complete_json("campaign_fill", "smart", llm.load_prompt("campaign_fill"), json.dumps(payload), FillOut)
+    ima = kind_of(pid) == IMA
+    ctx = build_context(pid, IMA if ima else "freelancer")
+    payload = {**ctx, "campaign_name": name.strip(), ("note_from_agency" if ima else "note_from_freelancer"): hint.strip(), "credits_left": credits_left}
+    out = await llm.complete_json("campaign_fill", "smart", llm.load_prompt("campaign_fill_ima" if ima else "campaign_fill"), json.dumps(payload), FillOut)
     filters, notes = merge(current, out, credits_left)
     return {
         "name": (out.get("name") or "").strip()[:80], "why": (out.get("why") or "").strip()[:800],
-        "filters": filters, "notes": notes, "used_offer_map": bool(ctx["offer_map"]),
+        "filters": filters, "notes": notes, "used_offer_map": bool(ctx.get("offer_map") or ctx.get("brand_map")),
     }

@@ -10,7 +10,7 @@ from redis.asyncio import from_url
 
 from .config import settings
 from .db import get_db
-from .routers import auth_google, campaigns, companies, export, leads, messages, offer_map, outbox, profiles, public, runs, stats
+from .routers import auth_google, brand_leads, campaigns, companies, export, leads, messages, offer_map, outbox, profiles, public, runs, stats
 from .routers import settings as settings_router
 
 
@@ -75,7 +75,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-for r in (profiles, offer_map, campaigns, runs, export, companies, leads, messages, settings_router, public, auth_google, outbox, stats):
+for r in (profiles, offer_map, campaigns, runs, export, brand_leads, companies, leads, messages, settings_router, public, auth_google, outbox, stats):
     app.include_router(r.router)
 
 

@@ -6,14 +6,17 @@ import { useToast } from "../components/Toast";
 import Empty from "../components/Empty";
 import { statusColor, type Run } from "./RunsPage";
 import { companyColor } from "../lib/fmt";
+import { useProfiles } from "../lib/profile";
 
 type Ev = { id: number; level: string; stage: string; message: string; created_at: string };
 type RunFull = Run & { campaigns?: { name: string; filters?: { maxCreditsPerStage?: number; maxLlmCallsPerStage?: number } } };
 type Co = { id: string; domain: string; name: string | null; country: string | null; size_estimate: number | null; status: string; fail_reason: string | null; score: number | null };
-const STAGES = ["discovery", "audit", "extract", "contacts", "judge", "assets", "sequences"];
-const STAGE_NAME: Record<string, string> = { assets: "reports", sequences: "emails" };
+const STAGES_FREELANCER = ["discovery", "audit", "extract", "contacts", "judge", "assets", "sequences"];
+const STAGES_IMA = ["discovery", "audit", "extract", "contacts", "brand_leads"];   // IMA stops at qualified
+const STAGE_NAME: Record<string, string> = { assets: "reports", sequences: "emails", brand_leads: "lead sheet" };
 
 export default function ActivityPage() {
+  const STAGES = useProfiles().current?.kind === "ima" ? STAGES_IMA : STAGES_FREELANCER;
   const [params, setParams] = useSearchParams();
   const toast = useToast();
   const qc = useQueryClient();
@@ -107,7 +110,7 @@ export default function ActivityPage() {
             {usage.stage_usage && Object.keys(usage.stage_usage).length > 0 && (
               <div className="card" style={{ fontSize: 12 }}>
                 <span className="label">Used per stage (each stage has its own limit: {f?.maxCreditsPerStage ?? 500} credits, {f?.maxLlmCallsPerStage ?? 300} AI calls)</span>
-                <div className="grid grid-cols-7 gap-2">
+                <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${STAGES.length}, minmax(0, 1fr))` }}>
                   {STAGES.map((s) => {
                     const u = usage.stage_usage?.[s];
                     return <div key={s} style={{ color: hit.has(s) ? "var(--warn)" : "var(--text-muted)" }}><div>{STAGE_NAME[s] ?? s}</div><div>{u ? `${u.credits ?? 0} cr · ${u.llm_calls ?? 0} AI` : "—"}</div></div>;

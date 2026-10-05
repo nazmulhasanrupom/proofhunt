@@ -3,7 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api, setActiveProfile } from "../api/client";
 
-export type Profile = { id: string; name: string; file_name: string | null; headline: string | null; created_at: string };
+export type ProfileKind = "freelancer" | "ima";
+export const KIND_LABEL: Record<ProfileKind, string> = { freelancer: "Freelancer", ima: "IMA" };
+export type Profile = { id: string; name: string; kind: ProfileKind; file_name: string | null; headline: string | null; created_at: string };
 type Ctx = {
   profiles: Profile[]; current: Profile | null; select: (id: string) => void;
   isLoading: boolean; error: Error | null; reload: () => void;

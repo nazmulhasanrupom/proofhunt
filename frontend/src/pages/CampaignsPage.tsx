@@ -7,6 +7,7 @@ import { useToast } from "../components/Toast";
 import ChipInput from "../components/ChipInput";
 import Empty from "../components/Empty";
 import Skeleton from "../components/Skeleton";
+import { useProfiles } from "../lib/profile";
 
 type Filters = {
   leadsWanted: number; maxCompaniesToScan: number; maxCreditsPerRun: number; maxCreditsPerStage: number; maxLlmCallsPerStage: number; maxPerCompany: number;
@@ -29,11 +30,20 @@ const DEFAULTS: Filters = {
   email: { allowGeneric: true, allowNoPerson: true, requireMx: true },
 };
 
+/** IMA: the form starts with the brand-hunting defaults. Any country, no size limit (a brand is judged on proof that it pays creators), and the people who buy creator deals. */
+const DEFAULTS_IMA: Filters = {
+  ...DEFAULTS,
+  company: { ...DEFAULTS.company, anyCountry: true, employeeRanges: [[1, 100000]] },
+  person: { ...DEFAULTS.person,
+    titlePriority: ["influencer marketing manager", "creator partnerships", "partnerships manager", "affiliate manager", "head of growth", "head of marketing", "cmo", "founder"],
+    seniority: ["owner", "c_suite", "head"] },
+};
+
 /** A saved campaign can miss newer fields. Fill them from the defaults so the form never breaks. */
-const withDefaults = (f: Partial<Filters>): Filters => ({
-  ...DEFAULTS, ...f,
-  company: { ...DEFAULTS.company, ...f.company }, person: { ...DEFAULTS.person, ...f.person },
-  qualify: { ...DEFAULTS.qualify, ...f.qualify }, email: { ...DEFAULTS.email, ...f.email },
+const withDefaults = (f: Partial<Filters>, base: Filters = DEFAULTS): Filters => ({
+  ...base, ...f,
+  company: { ...base.company, ...f.company }, person: { ...base.person, ...f.person },
+  qualify: { ...base.qualify, ...f.qualify }, email: { ...base.email, ...f.email },
 });
 
 const rangesText = (r: number[][]) => r.map(([a, b]) => `${a}-${b}`).join(", ");
@@ -47,11 +57,13 @@ export default function CampaignsPage() {
   const toast = useToast();
   const qc = useQueryClient();
   const nav = useNavigate();
+  const ima = useProfiles().current?.kind === "ima";
+  const base = ima ? DEFAULTS_IMA : DEFAULTS;
   const { data, isLoading } = useQuery({ queryKey: ["campaigns"], queryFn: () => api<Campaign[]>("/campaigns") });
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [name, setName] = useState("");
-  const [f, setF] = useState<Filters>(DEFAULTS);
+  const [f, setF] = useState<Filters>(base);
   const [hint, setHint] = useState("");
   const [fillNo, setFillNo] = useState(0);  // changes after every AI fill or undo: the employee range box keeps its own text, this makes it show the new one
   const [before, setBefore] = useState<{ name: string; f: Filters } | null>(null);  // the form as it was before the AI fill, for Undo
@@ -70,15 +82,15 @@ export default function CampaignsPage() {
     onError: (e: Error) => toast(e.message, true),
   });
   const resetAi = () => { formNo.current++; setHint(""); setBefore(null); setAi(null); };
-  const close = () => { setOpen(false); setEditId(null); setName(""); setF(DEFAULTS); resetAi(); };
-  const openNew = () => { resetAi(); setOpen(true); };
-  const edit = (c: Campaign) => { resetAi(); setEditId(c.id); setName(c.name); setF(withDefaults(c.filters)); setOpen(true); window.scrollTo?.(0, 0); };
+  const close = () => { setOpen(false); setEditId(null); setName(""); setF(base); resetAi(); };
+  const openNew = () => { resetAi(); setF(base); setOpen(true); };
+  const edit = (c: Campaign) => { resetAi(); setEditId(c.id); setName(c.name); setF(withDefaults(c.filters, base)); setOpen(true); window.scrollTo?.(0, 0); };
   const fill = useMutation({
     mutationFn: ({ no: _no, ...body }: { no: number; name: string; filters: Filters; hint: string }) => api<Fill>("/campaigns/ai-fill", { body }),
     onSuccess: (r, v) => {
       if (v.no !== formNo.current) return;
       setBefore({ name: v.name, f: v.filters });
-      setF(withDefaults(r.filters));
+      setF(withDefaults(r.filters, base));
       if (!v.name.trim() && r.name) setName(r.name);
       setFillNo((n) => n + 1);
       setAi(r);
@@ -87,7 +99,7 @@ export default function CampaignsPage() {
     onError: (e: Error) => toast(e.message, true),
   });
   const undo = () => { if (!before) return; setF(before.f); setName(before.name); setFillNo((n) => n + 1); setAi(null); setBefore(null); };
-  const editAndFill = (c: Campaign) => { edit(c); fill.mutate({ no: formNo.current, name: c.name, filters: withDefaults(c.filters), hint: "" }); };
+  const editAndFill = (c: Campaign) => { edit(c); fill.mutate({ no: formNo.current, name: c.name, filters: withDefaults(c.filters, base), hint: "" }); };
   const start = useMutation({
     mutationFn: (id: string) => api<{ id: string }>(`/campaigns/${id}/runs`, { method: "POST" }),
     onSuccess: (r) => { toast("Run started"); nav(`/activity?run=${r.id}`); },
@@ -105,26 +117,28 @@ export default function CampaignsPage() {
         {open && (
           <div className="card flex flex-col gap-4" key={editId ?? "new"}>
             {editId && <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Editing a campaign. Changes apply to new runs, and to Qualify on the Companies page. Companies already filtered out are checked again with the new filters when you press Qualify.</div>}
-            <div><span className="label">Name</span><input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="SEO agencies — US/UK" /></div>
+            <div><span className="label">Name</span><input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={ima ? "AI tool brands with creator programs" : "SEO agencies — US/UK"} /></div>
             <div className="flex flex-col gap-2 rounded-md border p-3" style={{ borderColor: "var(--border)", background: "var(--bg-2)" }}>
               <div className="flex items-end gap-2">
                 <div className="flex-1">
                   <span className="label">Tell the AI what you want (optional)</span>
-                  <input className="input" maxLength={500} value={hint} onChange={(e) => setHint(e.target.value)} placeholder="For example: only the UK, teams under 20, white-label link building" />
+                  <input className="input" maxLength={500} value={hint} onChange={(e) => setHint(e.target.value)} placeholder={ima ? "For example: only AI and SaaS brands, brands that sponsor YouTubers" : "For example: only the UK, teams under 20, white-label link building"} />
                 </div>
                 <button className="btn-primary flex items-center gap-1.5" disabled={fill.isPending} onClick={() => fill.mutate({ no: formNo.current, name, filters: f, hint })}>
                   <Sparkles size={14} />{fill.isPending ? "Thinking…" : "AI recommended fill"}
                 </button>
               </div>
               <div style={{ color: "var(--text-faint)", fontSize: 12 }}>
-                The AI reads this profile's CV and offer map and fills every field below, including the web keywords. It stays inside the Firecrawl credits you have left.
+                {ima
+                  ? "The AI reads this profile's agency brief and brand map and fills every field below, including the web keywords (product categories of the brands you want). It stays inside the Firecrawl credits you have left."
+                  : "The AI reads this profile's CV and offer map and fills every field below, including the web keywords. It stays inside the Firecrawl credits you have left."}
                 Nothing is saved until you press {editId ? "Save changes" : "Create campaign"}.
               </div>
               {ai && (
                 <div className="flex flex-col gap-1" style={{ fontSize: 13 }}>
                   {ai.why && <div><span style={{ color: "var(--text-muted)" }}>Why: </span>{ai.why}</div>}
                   {ai.notes.map((n) => <div key={n} style={{ color: "var(--warn)" }}>{n}</div>)}
-                  {!ai.used_offer_map && <div style={{ color: "var(--warn)" }}>This profile has no offer map yet, so the AI used only the CV. Generate the offer map first for a better result.</div>}
+                  {!ai.used_offer_map && <div style={{ color: "var(--warn)" }}>{ima ? "This profile has no brand map yet, so the AI used only the agency brief. Generate the brand map first for a better result." : "This profile has no offer map yet, so the AI used only the CV. Generate the offer map first for a better result."}</div>}
                   <div><button className="btn" onClick={undo}>Undo AI fill</button></div>
                 </div>
               )}
@@ -139,7 +153,7 @@ export default function CampaignsPage() {
               <Num label="Firecrawl credits per stage" value={f.maxCreditsPerStage} onChange={(n) => set("maxCreditsPerStage", n)} />
               <Num label="AI calls per stage" value={f.maxLlmCallsPerStage} onChange={(n) => set("maxLlmCallsPerStage", n)} />
               <div className="col-span-2 self-end pb-2" style={{ color: "var(--text-faint)", fontSize: 12 }}>
-                Every stage (discovery, audit, extract, contacts, judge, reports, emails) gets its own fresh limit.
+                Every stage ({ima ? "discovery, audit, extract, contacts, lead sheet" : "discovery, audit, extract, contacts, judge, reports, emails"}) gets its own fresh limit.
                 When a stage reaches its limit, the run moves on to the next stage with the companies it already has. It does not stop.
               </div>
             </div>
@@ -156,6 +170,7 @@ export default function CampaignsPage() {
             </div>
             <div>
               <span className="label">Web keywords</span>
+              {ima && <div style={{ color: "var(--text-faint)", fontSize: 12, marginBottom: 4 }}>Product categories of the brands you want, for example "ai writing tool" or "note taking app". Each one is searched together with phrases like "creator program", "affiliate program" and "partner with creators", and must appear on the brand's site.</div>}
               <ChipInput value={f.company.webKeywords} onChange={(v) => set("company", { ...f.company, webKeywords: v })} />
               {noKeywords && <div style={{ color: "var(--warn)", fontSize: 12, marginTop: 4 }}>Add at least one keyword, or press AI recommended fill. A company needs a keyword on its site to pass.</div>}
             </div>
@@ -170,9 +185,13 @@ export default function CampaignsPage() {
             <div><span className="label">Exclude titles</span><ChipInput value={f.person.excludeTitle} onChange={(v) => set("person", { ...f.person, excludeTitle: v })} /></div>
             <div><span className="label">Titles that count by rank, even if the title is not on the list above (owner, c_suite, head)</span><ChipInput value={f.person.seniority} onChange={(v) => set("person", { ...f.person, seniority: v })} /></div>
             <div className="grid grid-cols-5 gap-3">
-              <Num label="Min fit score" value={f.qualify.minFitScore} onChange={(n) => set("qualify", { ...f.qualify, minFitScore: n })} />
-              <Num label="Maybe from" value={f.qualify.maybeFrom} onChange={(n) => set("qualify", { ...f.qualify, maybeFrom: n })} />
-              <Num label="Demo from" value={f.qualify.demoFrom} onChange={(n) => set("qualify", { ...f.qualify, demoFrom: n })} />
+              {ima ? <div className="col-span-3 self-end pb-2" style={{ color: "var(--text-faint)", fontSize: 12 }}>
+                An IMA run has no scoring, no reports and no emails. A brand that gets through the filters is a lead. It goes in the Leads sheet: "good to go" when an email was found, "do manually" when not.
+              </div> : <>
+                <Num label="Min fit score" value={f.qualify.minFitScore} onChange={(n) => set("qualify", { ...f.qualify, minFitScore: n })} />
+                <Num label="Maybe from" value={f.qualify.maybeFrom} onChange={(n) => set("qualify", { ...f.qualify, maybeFrom: n })} />
+                <Num label="Demo from" value={f.qualify.demoFrom} onChange={(n) => set("qualify", { ...f.qualify, demoFrom: n })} />
+              </>}
               <label className="flex items-end gap-2 pb-2"><input type="checkbox" checked={f.email.allowGeneric} onChange={(e) => set("email", { ...f.email, allowGeneric: e.target.checked })} /> Allow generic email</label>
               <label className="flex items-end gap-2 pb-2"><input type="checkbox" checked={f.email.requireMx} onChange={(e) => set("email", { ...f.email, requireMx: e.target.checked })} /> Require MX</label>
             </div>

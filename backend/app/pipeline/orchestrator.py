@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 from ..db import get_db
 from ..schemas import CampaignFilters
 from ..services.usage import STOPPED, BudgetExceeded, RunStopped, StageLimitReached, log_event
-from . import assets, audit, contacts, discovery, extract, judge, sequences
+from . import assets, audit, brand_leads, contacts, discovery, extract, judge, sequences
+from .kinds import IMA, kind_of
 from .scope import chunks, todo as scope_todo
 
 
@@ -170,16 +171,22 @@ async def _stage(run_id: str, name: str, fn) -> bool:
 
 
 def _work_stages(run_id, campaign, should_stop, ids, stop_when=None) -> dict:
-    return {
+    stages = {
         "audit": lambda: audit.run(run_id, should_stop, ids),
         "extract": lambda: extract.run(run_id, campaign, should_stop, ids),
         "contacts": lambda: contacts.run(run_id, campaign, should_stop, ids),
-        "judge": lambda: judge.run(run_id, campaign, should_stop, ids, stop_when),
     }
+    if kind_of(campaign["profile_id"]) == IMA:  # no judge: a brand that got this far is qualified, and goes in the lead sheet
+        stages["brand_leads"] = lambda: brand_leads.run(run_id, campaign, should_stop, ids, stop_when)
+    else:
+        stages["judge"] = lambda: judge.run(run_id, campaign, should_stop, ids, stop_when)
+    return stages
 
 
 def _lead_stages(run_id, campaign, should_stop, ids) -> dict:
-    """The stages after the judge: report and demo, then the email drafts. Only for leads (qualified companies)."""
+    """The stages after the judge: report and demo, then the email drafts. Only for leads (qualified companies). IMA has none: it stops at qualified."""
+    if kind_of(campaign["profile_id"]) == IMA:
+        return {}
     return {
         "assets": lambda: _assets_stage(run_id, campaign, should_stop, ids),
         "sequences": lambda: _sequence_stage(run_id, campaign, should_stop, ids),

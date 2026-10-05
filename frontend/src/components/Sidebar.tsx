@@ -16,6 +16,8 @@ export default function Sidebar() {
   const badge: Record<string, number> = {
     "/leads": c?.leads ?? 0, "/review": c?.review ?? 0, "/replies": c?.reply_times.filter((t) => t > seen).length ?? 0,
   };
+  const ima = current?.kind === "ima";  // IMA writes and sends no emails: those pages would stay empty
+  const hide = ima ? ["/review", "/outbox", "/replies"] : [];
   const reconnect = !!s?.gmail_address && !s?.gmail_connected;
   const dot = s?.gmail_connected ? "var(--ok)" : reconnect ? "var(--bad)" : "var(--text-faint)";
   const gmailText = s?.gmail_connected ? s.gmail_address : reconnect ? "Reconnect Gmail" : "Gmail not connected";
@@ -28,7 +30,7 @@ export default function Sidebar() {
             <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-faint)" }}>
               {g.label}
             </div>
-            {g.items.map(({ path, label, icon: Icon }) => (
+            {g.items.filter((i) => !hide.includes(i.path)).map(({ path, label, icon: Icon }) => (
               <NavLink
                 key={path}
                 to={path}

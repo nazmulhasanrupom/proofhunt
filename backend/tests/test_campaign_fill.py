@@ -146,6 +146,7 @@ def test_suggest_sends_the_profile_and_returns_a_full_form(monkeypatch):
     monkeypatch.setattr(cf, "load_map", lambda pid: [{"active": True, "service": "SEO audits", "problems": ["p"], "ideal_customer": {"industry": "agencies"},
                                                       "signals": [{"active": True, "name": "s", "detector_type": "phrase", "config": {"phrases": ["x"]}}]}])
     monkeypatch.setattr(cf.llm, "complete_json", fake_llm)
+    monkeypatch.setattr(cf, "kind_of", lambda pid: "freelancer")
     out = asyncio.run(cf.suggest("pid", "My campaign", "only the UK", DEFAULT, 1000))
     assert seen["task"] == "campaign_fill"
     u = seen["user"]
@@ -168,3 +169,71 @@ def test_prompt_example_matches_the_schema():
     assert top == set(cf.FillOut.model_fields) - {"name", "why"}      # the prompt names every field the code reads
     for part, model in (("company", cf._Company), ("person", cf._Person), ("qualify", cf._Qualify), ("email", cf._Email)):
         assert set(shape[part]) == set(model.model_fields), part
+
+
+def test_ima_suggest_sends_the_brief_and_uses_the_ima_prompt(monkeypatch):
+    """An IMA profile gets the brand-hunting prompt, and the AI reads the agency brief, not a CV."""
+    class Q:
+        def __init__(self, rows): self.rows = rows
+        def select(self, *_): return self
+        def eq(self, *_): return self
+        def order(self, *_, **__): return self
+        def limit(self, *_): return self
+        def execute(self): return type("R", (), {"data": self.rows})()
+
+    parsed = {"name": "Nazmul", "kind": "ima", "agency": {"name": "Fylint"}, "niches": ["AI tools"],
+              "roster": [{"name": "Sam", "channel_url": "https://youtube.com/@sam", "niche": "AI tools", "avg_views": "45K", "audience_countries": ["India"],
+                          "content_style": "demos", "past_sponsors": [], "open_to_deals": True}]}
+
+    class Db:
+        def table(self, name):
+            return Q({"profiles": [{"name": "Fylint", "parsed": parsed}], "campaigns": []}.get(name, []))
+
+    seen = {}
+
+    async def fake_llm(task, model, system, user, schema, run_id=None, temperature=0.1):
+        import json
+        seen.update(task=task, system=system, user=json.loads(user))
+        return schema.model_validate({"company": {"webKeywords": ["ai writing tool"], "anyCountry": True, "employeeRanges": [[1, 100000]]},
+                                      "person": {"titlePriority": ["influencer marketing manager"]}}).model_dump()
+
+    monkeypatch.setattr(cf, "get_db", lambda: Db())
+    monkeypatch.setattr(cf, "load_map", lambda pid: [{"active": True, "service": "AI writing tools", "problems": ["reach"], "ideal_customer": {"industry": "SaaS"},
+                                                      "signals": [{"active": True, "name": "Creator program", "detector_type": "phrase", "config": {"phrases": ["creator program"]}}]}])
+    monkeypatch.setattr(cf.llm, "complete_json", fake_llm)
+    monkeypatch.setattr(cf, "kind_of", lambda pid: "ima")
+    out = asyncio.run(cf.suggest("pid", "", "only AI brands", DEFAULT, None))
+    u = seen["user"]
+    assert "BRANDS that already pay creators" in seen["system"]
+    assert u["brief"]["niches"] == ["AI tools"] and u["brief"]["roster"][0]["avg_views"] == "45K"
+    assert "channel_url" not in u["brief"]["roster"][0] and "cv" not in u      # no links or CV fields go to the AI
+    assert u["brand_map"][0]["niche"] == "AI writing tools" and u["note_from_agency"] == "only AI brands"
+    assert out["used_offer_map"] is True
+    f = out["filters"]["company"]
+    assert f["webKeywords"] == ["ai writing tool"] and f["anyCountry"] is True and f["employeeRanges"] == [[1, 100000]]
+    assert out["filters"]["person"]["titlePriority"] == ["influencer marketing manager"]
+
+
+def test_ima_prompt_example_matches_the_schema():
+    import json
+    from app.services.llm import load_prompt
+    text = load_prompt("campaign_fill_ima")
+    shape = json.loads(text[text.index('{"name"'):])
+    assert cf.FillOut.model_validate(shape)
+    assert set(shape) - {"name", "why"} == set(cf.FillOut.model_fields) - {"name", "why"}
+    for part, model in (("company", cf._Company), ("person", cf._Person), ("qualify", cf._Qualify), ("email", cf._Email)):
+        assert set(shape[part]) == set(model.model_fields), part
+
+
+def test_other_ima_prompts_show_valid_json_shapes():
+    """The prompts the AI copies a shape from must match what the code reads."""
+    import json
+    from app.pipeline.discovery import PrescreenOut, QueriesOut
+    from app.pipeline.offer_map import OfferMapOut
+    from app.pipeline.ima_brief import ParsedBrief
+    from app.services.llm import load_prompt
+    for name, model in (("ima_parse", ParsedBrief), ("brand_map", OfferMapOut), ("queries_ima", QueriesOut), ("prescreen_ima", PrescreenOut)):
+        text = load_prompt(name)
+        start = text.index("JSON shape:") + len("JSON shape:")
+        shape = json.loads(text[start:text.index("\n\n", start) if "\n\n" in text[start:] else len(text)].split("\nReturn one item")[0].strip().replace('"yes|no|unsure"', '"yes"'))
+        assert model.model_validate(shape), name

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2 } from "lucide-react";
 import { api } from "../api/client";
+import { useProfiles } from "../lib/profile";
 import { useToast } from "../components/Toast";
 import Skeleton from "../components/Skeleton";
 import Empty from "../components/Empty";
@@ -24,13 +25,14 @@ const lines = (s: string) => s.split("\n").map((x) => x.trim()).filter(Boolean);
 export default function OfferMapPage() {
   const toast = useToast();
   const qc = useQueryClient();
+  const ima = useProfiles().current?.kind === "ima";  // an IMA profile has a brand map: one row is a niche, signals are proof that a brand pays creators
   const { data, isLoading } = useQuery({ queryKey: ["offer-map"], queryFn: () => api<MapData>("/offer-map") });
   const [rows, setRows] = useState<Row[]>([]);
   useEffect(() => { if (data) setRows(data.rows); }, [data]);
 
   const save = useMutation({
     mutationFn: () => api<Row[]>("/offer-map", { method: "PUT", body: { rows } }),
-    onSuccess: () => { toast("Offer map saved"); qc.invalidateQueries({ queryKey: ["offer-map"] }); },
+    onSuccess: () => { toast(ima ? "Brand map saved" : "Offer map saved"); qc.invalidateQueries({ queryKey: ["offer-map"] }); },
     onError: (e: Error) => toast(e.message, true),
   });
 
@@ -41,12 +43,12 @@ export default function OfferMapPage() {
   return (
     <div className="page">
       <div className="page-head">
-        <span>Offer map</span>
+        <span>{ima ? "Brand map" : "Offer map"}</span>
         {rows.length > 0 && <button className="btn-primary" disabled={save.isPending} onClick={() => save.mutate()}>Save</button>}
       </div>
       <div className="page-body flex flex-col gap-4">
         {isLoading && <Skeleton />}
-        {!isLoading && rows.length === 0 && <Empty text="No offer map yet. Upload a CV first, then generate it." />}
+        {!isLoading && rows.length === 0 && <Empty text={ima ? "No brand map yet. Upload an agency brief first, then generate it." : "No offer map yet. Upload a CV first, then generate it."} />}
         {rows.map((r, i) => (
           <div key={r.id ?? i} className="card flex flex-col gap-3" style={{ opacity: r.active ? 1 : 0.5 }}>
             <div className="flex items-center gap-2">
@@ -56,15 +58,15 @@ export default function OfferMapPage() {
               </label>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <div><span className="label">Problems (one per line)</span>
+              <div><span className="label">{ima ? "What brands want (one per line)" : "Problems (one per line)"}</span>
                 <textarea className="textarea" key={r.id ?? i} defaultValue={r.problems.join("\n")} onBlur={(e) => setRow(i, { problems: lines(e.target.value) })} /></div>
-              <div><span className="label">Proof (one per line)</span>
+              <div><span className="label">{ima ? "Roster creators of this niche (one per line)" : "Proof (one per line)"}</span>
                 <textarea className="textarea" key={r.id ?? i} defaultValue={r.proof.join("\n")} onBlur={(e) => setRow(i, { proof: lines(e.target.value) })} /></div>
             </div>
-            <div><span className="label">Ideal customer industry</span>
+            <div><span className="label">{ima ? "Brand type" : "Ideal customer industry"}</span>
               <input className="input" value={r.ideal_customer.industry ?? ""} onChange={(e) => setRow(i, { ideal_customer: { ...r.ideal_customer, industry: e.target.value } })} /></div>
             <div>
-              <span className="label">Signals</span>
+              <span className="label">{ima ? "Signals (proof that a brand pays creators)" : "Signals"}</span>
               <div className="flex flex-col gap-2">
                 {r.signals.map((s, k) => (
                   <div key={s.id ?? k} className="flex items-center gap-2" style={{ opacity: s.active ? 1 : 0.5 }}>
@@ -89,8 +91,8 @@ export default function OfferMapPage() {
         ))}
         {rows.length > 0 && (
           <button className="btn" style={{ alignSelf: "flex-start" }}
-            onClick={() => setRows([...rows, { service: "New service", problems: [], proof: [], ideal_customer: {}, active: true, signals: [] }])}>
-            <Plus size={14} className="inline" /> Add service
+            onClick={() => setRows([...rows, { service: ima ? "New niche" : "New service", problems: [], proof: [], ideal_customer: {}, active: true, signals: [] }])}>
+            <Plus size={14} className="inline" /> {ima ? "Add niche" : "Add service"}
           </button>
         )}
       </div>
