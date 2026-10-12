@@ -21,6 +21,10 @@ _down_until: dict[str, float] = {}   # provider name -> time until we skip it af
 COOLDOWN = 60.0
 
 
+def load_prompt(name: str) -> str:
+    return (PROMPTS / f"{name}.md").read_text()
+
+
 def _providers(kind: str) -> list[dict]:
     """In order: free providers first, paid DeepSeek last. Providers with no key or model are left out."""
     chain = [
