@@ -8,6 +8,13 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     deepseek_model_fast: str = "deepseek-flash"
     deepseek_model_smart: str = "deepseek-v4-pro"
+    # Free providers, tried first in this order. Paid DeepSeek is the last fallback.
+    agy_base_url: str = "https://agy.nazalhasan.com/v1"
+    agy_api_key: str = ""
+    agy_model: str = "gemini-3.6-flash-medium"   # an empty model makes agy answer 502
+    apifree_base_url: str = "https://sr-us.apifree.ai/v1"
+    apifree_api_key: str = ""
+    apifree_model: str = "gemini-3.6-flash"
 
     google_client_id: str = ""
     google_client_secret: str = ""
